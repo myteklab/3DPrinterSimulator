@@ -1615,18 +1615,38 @@ async function exportToAssets(format) {
 }
 
 /**
- * Generate GLB data for export to assets
+ * Generate GLB data for export to assets.
+ * If a print has been completed (tube meshes exist), exports the printed
+ * result including shells/infill. Otherwise exports the original STL models.
  */
 async function generateGLBData() {
     if (!simulator || !simulator.scene) {
         return null;
     }
 
-    // Collect all preview meshes from loaded models
+    // Prefer the printed result (tube meshes) over raw preview meshes
     const meshesToExport = [];
-    for (const model of loadedModels) {
-        if (model.previewMesh) {
-            meshesToExport.push(model.previewMesh);
+    let usingPrintedResult = false;
+
+    // Check for printed tube mesh from finalQualityRender
+    if (simulator.lineMesh) {
+        meshesToExport.push(simulator.lineMesh);
+        usingPrintedResult = true;
+    }
+    // Also include any frozen meshes (chunks frozen during printing)
+    if (simulator.frozenMeshes && simulator.frozenMeshes.length > 0) {
+        for (const mesh of simulator.frozenMeshes) {
+            if (mesh) meshesToExport.push(mesh);
+        }
+        usingPrintedResult = true;
+    }
+
+    // Fall back to original preview meshes if no print has been done
+    if (!usingPrintedResult) {
+        for (const model of loadedModels) {
+            if (model.previewMesh) {
+                meshesToExport.push(model.previewMesh);
+            }
         }
     }
 
@@ -1642,9 +1662,12 @@ async function generateGLBData() {
 
     // Temporarily replace materials with colored material for export
     const originalMaterials = [];
+    const originalEnabled = [];
     for (const mesh of meshesToExport) {
         originalMaterials.push(mesh.material);
+        originalEnabled.push(mesh.isEnabled());
         mesh.material = exportMaterial;
+        mesh.setEnabled(true);
     }
 
     try {
@@ -1660,9 +1683,10 @@ async function generateGLBData() {
         return glbBlob;
 
     } finally {
-        // Restore original materials
+        // Restore original materials and enabled state
         for (let i = 0; i < meshesToExport.length; i++) {
             meshesToExport[i].material = originalMaterials[i];
+            meshesToExport[i].setEnabled(originalEnabled[i]);
         }
         exportMaterial.dispose();
     }
