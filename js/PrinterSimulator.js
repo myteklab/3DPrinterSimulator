@@ -1587,8 +1587,10 @@ class PrinterSimulator {
                 this.updateLineMesh();
 
                 // Perform final high-quality render for realistic appearance
-                // (skip during restore to avoid multi-second freeze)
-                if (!this._skipFinalRender) {
+                if (this._skipFinalRender) {
+                    // Defer quality upgrade so restore feels instant
+                    setTimeout(() => this.finalQualityRender(), 500);
+                } else {
                     this.finalQualityRender();
                 }
 
