@@ -1615,38 +1615,21 @@ async function exportToAssets(format) {
 }
 
 /**
- * Generate GLB data for export to assets.
- * If a print has been completed (tube meshes exist), exports the printed
- * result including shells/infill. Otherwise exports the original STL models.
+ * Generate GLB data for export.
+ * Exports the original model geometry with filament color applied.
+ * Preview meshes are temporarily re-enabled for export (they may be
+ * hidden during print simulation).
  */
 async function generateGLBData() {
     if (!simulator || !simulator.scene) {
         return null;
     }
 
-    // Prefer the printed result (tube meshes) over raw preview meshes
+    // Export original preview meshes (the actual solid model geometry)
     const meshesToExport = [];
-    let usingPrintedResult = false;
-
-    // Check for printed tube mesh from finalQualityRender
-    if (simulator.lineMesh) {
-        meshesToExport.push(simulator.lineMesh);
-        usingPrintedResult = true;
-    }
-    // Also include any frozen meshes (chunks frozen during printing)
-    if (simulator.frozenMeshes && simulator.frozenMeshes.length > 0) {
-        for (const mesh of simulator.frozenMeshes) {
-            if (mesh) meshesToExport.push(mesh);
-        }
-        usingPrintedResult = true;
-    }
-
-    // Fall back to original preview meshes if no print has been done
-    if (!usingPrintedResult) {
-        for (const model of loadedModels) {
-            if (model.previewMesh) {
-                meshesToExport.push(model.previewMesh);
-            }
+    for (const model of loadedModels) {
+        if (model.previewMesh) {
+            meshesToExport.push(model.previewMesh);
         }
     }
 
@@ -1659,8 +1642,10 @@ async function generateGLBData() {
     exportMaterial.diffuseColor = simulator.filamentColor.clone();
     exportMaterial.specularColor = new BABYLON.Color3(0.2, 0.2, 0.2);
     exportMaterial.alpha = 1.0;
+    exportMaterial.backFaceCulling = false;
 
-    // Temporarily replace materials with colored material for export
+    // Temporarily replace materials and re-enable meshes for export
+    // (preview meshes are hidden during print simulation)
     const originalMaterials = [];
     const originalEnabled = [];
     for (const mesh of meshesToExport) {
