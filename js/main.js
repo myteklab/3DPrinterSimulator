@@ -1616,62 +1616,80 @@ async function exportToAssets(format) {
 
 /**
  * Generate GLB data for export.
- * Exports the original model geometry with filament color applied.
- * Preview meshes are temporarily re-enabled for export (they may be
- * hidden during print simulation).
+ * Clones the original model geometry, bakes transforms, and applies
+ * per-vertex layer-line coloring based on the filament color and
+ * current layer height to give a 3D-printed appearance.
  */
 async function generateGLBData() {
     if (!simulator || !simulator.scene) {
         return null;
     }
 
-    // Export original preview meshes (the actual solid model geometry)
-    const meshesToExport = [];
+    const clones = [];
+    const layerHeight = parseFloat(document.getElementById('dock-layer-height')?.value) || 0.2;
+    const baseColor = simulator.lockedPrintColor || simulator.filamentColor;
+
     for (const model of loadedModels) {
-        if (model.previewMesh) {
-            meshesToExport.push(model.previewMesh);
+        if (!model.previewMesh) continue;
+
+        // Clone so we don't modify the original
+        const clone = model.previewMesh.clone('export_' + (model.id || clones.length), null, true, false);
+        clone.position = model.previewMesh.position.clone();
+        clone.rotation = model.previewMesh.rotation.clone();
+        clone.scaling = model.previewMesh.scaling.clone();
+        clone.setEnabled(true);
+        clone.computeWorldMatrix(true);
+        clone.bakeCurrentTransformIntoVertices();
+
+        const positions = clone.getVerticesData(BABYLON.VertexBuffer.PositionKind);
+        if (!positions) { clone.dispose(); continue; }
+
+        // Find height range (Y is up in Babylon.js)
+        let minY = Infinity;
+        for (let i = 1; i < positions.length; i += 3) {
+            if (positions[i] < minY) minY = positions[i];
         }
+
+        // Build per-vertex colors with layer-line banding
+        const vertexCount = positions.length / 3;
+        const colors = new Float32Array(vertexCount * 4);
+        for (let v = 0; v < vertexCount; v++) {
+            const y = positions[v * 3 + 1];
+            const layerNum = Math.floor((y - minY) / layerHeight);
+            // Alternate: full brightness / slightly darker each layer
+            const shade = (layerNum % 2 === 0) ? 1.0 : 0.82;
+            colors[v * 4]     = baseColor.r * shade;
+            colors[v * 4 + 1] = baseColor.g * shade;
+            colors[v * 4 + 2] = baseColor.b * shade;
+            colors[v * 4 + 3] = 1.0;
+        }
+        clone.setVerticesData(BABYLON.VertexBuffer.ColorKind, colors);
+        clones.push(clone);
     }
 
-    if (meshesToExport.length === 0) {
+    if (clones.length === 0) {
         return null;
     }
 
-    // Create a material with the selected filament color for export
+    // White diffuse so vertex colors come through unmodified
     const exportMaterial = new BABYLON.StandardMaterial("export_material", simulator.scene);
-    exportMaterial.diffuseColor = simulator.filamentColor.clone();
-    exportMaterial.specularColor = new BABYLON.Color3(0.2, 0.2, 0.2);
+    exportMaterial.diffuseColor = new BABYLON.Color3(1, 1, 1);
+    exportMaterial.specularColor = new BABYLON.Color3(0.15, 0.15, 0.15);
     exportMaterial.alpha = 1.0;
     exportMaterial.backFaceCulling = false;
 
-    // Temporarily replace materials and re-enable meshes for export
-    // (preview meshes are hidden during print simulation)
-    const originalMaterials = [];
-    const originalEnabled = [];
-    for (const mesh of meshesToExport) {
-        originalMaterials.push(mesh.material);
-        originalEnabled.push(mesh.isEnabled());
+    for (const mesh of clones) {
         mesh.material = exportMaterial;
-        mesh.setEnabled(true);
     }
 
     try {
-        // Export using Babylon's GLTF exporter
         const result = await BABYLON.GLTF2Export.GLBAsync(simulator.scene, 'build_plate_models', {
-            shouldExportNode: (node) => {
-                return meshesToExport.includes(node);
-            }
+            shouldExportNode: (node) => clones.includes(node)
         });
-
-        // Get the GLB blob from the result
-        const glbBlob = result.glTFFiles['build_plate_models.glb'];
-        return glbBlob;
-
+        return result.glTFFiles['build_plate_models.glb'];
     } finally {
-        // Restore original materials and enabled state
-        for (let i = 0; i < meshesToExport.length; i++) {
-            meshesToExport[i].material = originalMaterials[i];
-            meshesToExport[i].setEnabled(originalEnabled[i]);
+        for (const clone of clones) {
+            clone.dispose();
         }
         exportMaterial.dispose();
     }
