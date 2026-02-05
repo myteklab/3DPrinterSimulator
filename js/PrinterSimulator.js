@@ -5,7 +5,9 @@
 class PrinterSimulator {
     constructor(canvas) {
         this.canvas = canvas;
-        this.engine = new BABYLON.Engine(canvas, true);
+        this.engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true });
+        // Render at CSS pixel resolution (not retina) to reduce GPU load in iframe
+        this.engine.setHardwareScalingLevel(1);
         this.scene = null;
         this.camera = null;
         this.printHead = null;
