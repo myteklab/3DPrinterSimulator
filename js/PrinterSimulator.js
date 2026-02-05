@@ -1586,11 +1586,9 @@ class PrinterSimulator {
                 // NOW update the mesh once with all geometry
                 this.updateLineMesh();
 
-                // Perform final high-quality render for realistic appearance
-                if (this._skipFinalRender) {
-                    // Defer quality upgrade so restore feels instant
-                    setTimeout(() => this.finalQualityRender(), 500);
-                } else {
+                // Perform final high-quality render (3D tubes) for realistic appearance
+                // Skip on restore — line mesh is sufficient and much lighter on GPU
+                if (!this._skipFinalRender) {
                     this.finalQualityRender();
                 }
 
