@@ -1528,7 +1528,7 @@ class PrinterSimulator {
     /**
      * Quick print - render final result in batches
      */
-    quickPrint(onComplete) {
+    quickPrint(onComplete, skipFinalRender) {
         if (!this.commands || this.commands.length === 0) return;
 
         // Process all commands without animation
@@ -1538,6 +1538,7 @@ class PrinterSimulator {
         // Disable mesh updates during quick print
         const originalUpdateCounter = this.updateCounter;
         this.isQuickPrinting = true;
+        this._skipFinalRender = skipFinalRender || false;
         this.useInterpolation = false; // Disable interpolation for quick print
         this.lastSegmentCount = 0; // Reset so final update will work
 
@@ -1586,7 +1587,10 @@ class PrinterSimulator {
                 this.updateLineMesh();
 
                 // Perform final high-quality render for realistic appearance
-                this.finalQualityRender();
+                // (skip during restore to avoid multi-second freeze)
+                if (!this._skipFinalRender) {
+                    this.finalQualityRender();
+                }
 
                 // Hide print head since print is complete
                 if (this.printHead) {

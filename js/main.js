@@ -2710,11 +2710,12 @@ function loadProjectData(data) {
                 }
 
                 // Use quick print to instantly render the completed print
+                // Skip finalQualityRender (3D tubes) — line mesh is sufficient for restore
                 showToast('Restoring print...', 'info', 1500);
                 simulator.quickPrint(() => {
                     showToast('Print restored!', 'success', 2000);
                     console.log('Print restoration complete!');
-                });
+                }, true);
             }
         }, 1500); // Wait for models to load first
     } else {
