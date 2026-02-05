@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Printer Simulator</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://cdn.babylonjs.com/babylon.js"></script>
+    <script src="https://cdn.babylonjs.com/materialsLibrary/babylonjs.materials.min.js"></script>
+    <script src="https://cdn.babylonjs.com/serializers/babylonjs.serializers.min.js"></script>
+</head>
+<body>
+    <!-- Status Toast -->
+    <div id="status-toast" class="status-toast hidden"></div>
+
+    <div id="container">
+        <div id="workspace">
+            <!-- Controls Panel -->
+            <div id="controls-panel">
+                <h2 style="white-space: nowrap;">3D Printer <span class="help-icon" onclick="showHelp('3d-printing')">?</span></h2>
+
+                <!-- Mode Toggle -->
+                <div class="mode-toggle-container">
+                    <button id="learning-mode-btn" class="mode-btn" onclick="setMode(true)">Learning</button>
+                    <button id="standard-mode-btn" class="mode-btn active" onclick="setMode(false)">Standard</button>
+                </div>
+
+                <!-- ========== LEARNING MODE SECTIONS ========== -->
+
+                <!-- LEARNING: Shape Generator -->
+                <div class="control-group" data-mode="learning">
+                    <h3 class="section-header" onclick="toggleSection('learn-shape-section')">
+                        <span class="section-icon">&#x1F3B2;</span> Shape Generator
+                        <span class="help-icon" onclick="event.stopPropagation(); showHelp('shapes')">?</span>
+                        <span class="chevron">&#x25BC;</span>
+                    </h3>
+                    <div id="learn-shape-section" class="collapsible-content show">
+                        <label for="shape-type"><span class="label-icon">&#x1F4D0;</span> Shape:</label>
+                        <select id="shape-type">
+                            <option value="cube">Cube</option>
+                            <option value="cylinder">Cylinder</option>
+                            <option value="pyramid">Pyramid</option>
+                        </select>
+
+                        <label for="shape-size" style="margin-top: 10px;"><span class="label-icon">&#x1F4CF;</span> Size:</label>
+                        <select id="shape-size">
+                            <option value="10">Small (10mm)</option>
+                            <option value="20" selected>Medium (20mm)</option>
+                            <option value="30">Large (30mm)</option>
+                        </select>
+
+                        <button id="generate-learn-btn" class="btn btn-primary btn-large" style="margin-top: 15px; width: 100%;" onclick="generateLearningShape()">
+                            &#x1F3AC; Generate & Watch Print
+                        </button>
+                    </div>
+                </div>
+
+                <!-- LEARNING: Simplified Print Settings -->
+                <div class="control-group" data-mode="learning">
+                    <h3 class="section-header" onclick="toggleSection('learn-settings-section')">
+                        <span class="section-icon">&#x2699;&#xFE0F;</span> Print Settings
+                        <span class="help-icon" onclick="event.stopPropagation(); showHelp('infill')">?</span>
+                        <span class="chevron">&#x25BC;</span>
+                    </h3>
+                    <div id="learn-settings-section" class="collapsible-content show">
+                        <label for="learn-infill-pattern"><span class="label-icon">&#x1F3A8;</span> Infill Pattern:</label>
+                        <select id="learn-infill-pattern">
+                            <option value="grid">Grid - Strong & Fast</option>
+                            <option value="honeycomb">Honeycomb - Very Strong</option>
+                            <option value="lines">Lines - Fast</option>
+                            <option value="concentric">Concentric - Flexible</option>
+                            <option value="zigzag">Zigzag - Decorative</option>
+                        </select>
+                        <div class="hint">How the inside of your shape is filled</div>
+
+                        <label for="learn-infill-density" style="margin-top: 10px;"><span class="label-icon">&#x1F4CA;</span> Infill Amount:</label>
+                        <select id="learn-infill-density">
+                            <option value="0">Empty (0%) - Hollow</option>
+                            <option value="10">Light (10%)</option>
+                            <option value="20" selected>Normal (20%)</option>
+                            <option value="50">Strong (50%)</option>
+                            <option value="100">Solid (100%)</option>
+                        </select>
+                        <div class="hint">More infill = stronger but slower to print</div>
+                    </div>
+                </div>
+
+                <!-- LEARNING: Simplified Playback -->
+                <div class="control-group" data-mode="learning">
+                    <h3 class="section-header" onclick="toggleSection('learn-playback-section')">
+                        <span class="section-icon">&#x1F441;&#xFE0F;</span> Watch Printing
+                        <span class="help-icon" onclick="event.stopPropagation(); showHelp('layers')">?</span>
+                        <span class="chevron">&#x25BC;</span>
+                    </h3>
+                    <div id="learn-playback-section" class="collapsible-content show">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="learn-step-mode" checked onchange="toggleLearnStepMode(this.checked)">
+                            Step-Through Mode
+                        </label>
+                        <div class="hint" style="margin-left: 24px; margin-top: -5px;">Watch one layer at a time</div>
+
+                        <div class="button-grid" style="grid-template-columns: 1fr 1fr; margin-top: 15px;">
+                            <button id="learn-prev-layer" class="btn" onclick="stepBack()">&#x25C0; Previous</button>
+                            <button id="learn-next-layer" class="btn btn-primary" onclick="stepForward()">Next &#x25B6;</button>
+                        </div>
+
+                        <hr style="border: 1px solid #333; margin: 15px 0;">
+
+                        <label>Or auto-play:</label>
+                        <div style="display: flex; gap: 10px; margin-top: 5px;">
+                            <button id="learn-play-btn" class="btn" onclick="playLearningMode()" style="flex: 1;">&#x25B6; Play</button>
+                            <select id="learn-speed" style="width: 100px;" onchange="setLearnSpeed(this.value)">
+                                <option value="0.5">Slow</option>
+                                <option value="1" selected>Normal</option>
+                                <option value="5">Fast</option>
+                            </select>
+                        </div>
+
+                        <button id="learn-reset-btn" class="btn btn-secondary" onclick="resetSimulation()" style="margin-top: 10px; width: 100%;">&#x21BB; Reset</button>
+                    </div>
+                </div>
+
+                <!-- LEARNING: Color Only -->
+                <div class="control-group" data-mode="learning">
+                    <h3 class="section-header" onclick="toggleSection('learn-color-section')">
+                        <span class="section-icon">&#x1F3A8;</span> Filament Color
+                        <span class="help-icon" onclick="event.stopPropagation(); showHelp('filament')">?</span>
+                        <span class="chevron">&#x25BC;</span>
+                    </h3>
+                    <div id="learn-color-section" class="collapsible-content show">
+                        <div class="color-picker-row">
+                            <input type="color" id="learn-filament-color" value="#ff6b35">
+                            <select id="learn-color-presets" onchange="document.getElementById('learn-filament-color').value = this.value; simulator.setFilamentColor(this.value);">
+                                <option value="#ff6b35">Orange</option>
+                                <option value="#ffffff">White</option>
+                                <option value="#000000">Black</option>
+                                <option value="#ff0000">Red</option>
+                                <option value="#0066ff">Blue</option>
+                                <option value="#00ff00">Green</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ========== STANDARD MODE SECTIONS ========== -->
+
+                <!-- 1. FILE & MODEL SECTION -->
+                <div class="control-group" data-mode="standard">
+                    <h3 class="section-header" onclick="toggleSection('file-section')">
+                        <span class="section-icon">&#x1F4C1;</span> File & Model
+                        <span class="help-icon" onclick="event.stopPropagation(); showHelp('stl')">?</span>
+                        <span class="chevron">&#x25BC;</span>
+                </h3>
+                <div id="file-section" class="collapsible-content show">
+                    <input type="file" id="stl-file" accept=".stl" class="file-input">
+                    <label for="stl-file" class="file-label">&#x1F4E6; Add STL to Build Plate</label>
+
+                    <div style="margin: 10px 0;">
+                        <input type="text" id="stl-url" placeholder="https://example.com/model.stl"
+                               style="width: 100%; padding: 8px; background: #1a1a2e; border: 1px solid #333; color: #eee; border-radius: 4px; font-size: 12px;">
+                        <button id="load-url-btn" class="btn btn-secondary" style="width: 100%; margin-top: 5px;">&#x1F310; Load STL from URL</button>
+                    </div>
+
+                    <div id="save-status" style="text-align: center; margin-top: 5px; font-size: 11px; color: #888;"></div>
+                </div>
+            </div>
+
+            <!-- 2. BUILD PLATE MODELS -->
+            <div class="control-group" data-mode="standard">
+                <h3 class="section-header" onclick="toggleSection('models-section')">
+                    <span class="section-icon">&#x1F5C2;&#xFE0F;</span> Build Plate Models
+                    <span class="help-icon" onclick="event.stopPropagation(); showHelp('buildplate')">?</span>
+                    <span class="chevron">&#x25BC;</span>
+                </h3>
+                <div id="models-section" class="collapsible-content show">
+                    <div id="model-list">
+                        <div style="color: #888; font-size: 12px; padding: 10px; text-align: center;">No models loaded</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. TRANSFORM CONTROLS -->
+            <div class="control-group" data-mode="standard">
+                <h3 class="section-header" onclick="toggleSection('transform-section')">
+                    <span class="section-icon">&#x1F3AF;</span> Position & Scale
+                    <span class="help-icon" onclick="event.stopPropagation(); showHelp('transform')">?</span>
+                    <span class="chevron">&#x25BC;</span>
+                </h3>
+                <div id="transform-section" class="collapsible-content show">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="show-gizmos" checked onchange="toggleGizmos(this.checked)"> &#x1F3AE; Show Gizmos (Drag in 3D)
+                    </label>
+
+                    <div id="gizmo-type-selector" style="margin-left: 24px; margin-top: 5px; margin-bottom: 10px;">
+                        <label for="gizmo-type" style="font-size: 12px;">Gizmo Type:</label>
+                        <select id="gizmo-type" onchange="changeGizmoType(this.value)">
+                            <option value="position">Move (X, Y, Z)</option>
+                            <option value="rotation">Rotate (X, Y, Z)</option>
+                            <option value="scale">Scale (Resize)</option>
+                        </select>
+                    </div>
+
+                    <div id="transform-controls" style="margin-top: 10px;">
+                        <label for="model-pos-x">
+                            <span class="label-icon">&#x2194;&#xFE0F;</span> Position X: <span id="pos-x-value">0.0</span>mm
+                        </label>
+                        <input type="range" id="model-pos-x" min="-100" max="100" step="0.5" value="0" oninput="updateModelPosition('x', this.value)">
+
+                        <label for="model-pos-y">
+                            <span class="label-icon">&#x2194;&#xFE0F;</span> Position Y: <span id="pos-y-value">0.0</span>mm
+                        </label>
+                        <input type="range" id="model-pos-y" min="-100" max="100" step="0.5" value="0" oninput="updateModelPosition('y', this.value)">
+
+                        <label for="model-pos-z">
+                            <span class="label-icon">&#x2B06;&#xFE0F;</span> Position Z (Height): <span id="pos-z-value">0.0</span>mm
+                        </label>
+                        <input type="range" id="model-pos-z" min="0" max="200" step="0.5" value="0" oninput="updateModelPosition('z', this.value)">
+
+                        <label for="model-rotation-x">
+                            <span class="label-icon">&#x1F504;</span> Rotation X: <span id="rotation-x-value">0</span>&#xB0;
+                        </label>
+                        <input type="range" id="model-rotation-x" min="0" max="360" step="5" value="0" oninput="updateModelRotationAxis('x', this.value)">
+
+                        <label for="model-rotation-y">
+                            <span class="label-icon">&#x1F504;</span> Rotation Y: <span id="rotation-y-value">0</span>&#xB0;
+                        </label>
+                        <input type="range" id="model-rotation-y" min="0" max="360" step="5" value="0" oninput="updateModelRotationAxis('y', this.value)">
+
+                        <label for="model-rotation-z">
+                            <span class="label-icon">&#x1F504;</span> Rotation Z: <span id="rotation-z-value">0</span>&#xB0;
+                        </label>
+                        <input type="range" id="model-rotation-z" min="0" max="360" step="5" value="0" oninput="updateModelRotationAxis('z', this.value)">
+
+                        <label for="model-scale">
+                            <span class="label-icon">&#x1F4CF;</span> Scale: <span id="scale-value">100</span>%
+                        </label>
+                        <input type="range" id="model-scale" min="10" max="300" step="5" value="100" oninput="updateModelScale(this.value)">
+
+                        <button class="btn btn-secondary" onclick="dropToBuildPlate()" style="margin-top: 10px;">&#x2B07;&#xFE0F; Drop to Build Plate</button>
+                        <div class="hint">Auto-align model bottom to Z=0</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- APPEARANCE -->
+            <div class="control-group" data-mode="standard">
+                <h3 class="section-header" onclick="toggleSection('appearance-section')">
+                    <span class="section-icon">&#x1F3A8;</span> Appearance
+                    <span class="help-icon" onclick="event.stopPropagation(); showHelp('appearance')">?</span>
+                    <span class="chevron">&#x25BC;</span>
+                </h3>
+                <div id="appearance-section" class="collapsible-content">
+                    <label for="filament-color"><span class="label-icon">&#x1F3A8;</span> Filament Color:</label>
+                    <div class="color-picker-row">
+                        <input type="color" id="filament-color" value="#ff6b35">
+                        <select id="color-presets">
+                            <option value="#ff6b35">Orange</option>
+                            <option value="#ffffff">White</option>
+                            <option value="#000000">Black</option>
+                            <option value="#ff0000">Red</option>
+                            <option value="#0066ff">Blue</option>
+                            <option value="#00ff00">Green</option>
+                            <option value="#ffff00">Yellow</option>
+                            <option value="#c0c0c0">Silver</option>
+                            <option value="#ffd700">Gold</option>
+                        </select>
+                    </div>
+
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="rainbow-mode"> Rainbow Layers
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="use-cylinders"> 3D Cylinders (Slower)
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="show-printhead" checked> Show Print Head
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="show-bed" checked> Show Build Plate
+                    </label>
+                </div>
+            </div>
+
+            <!-- LIGHTING -->
+            <div class="control-group" data-mode="standard">
+                <h3 class="section-header" onclick="toggleSection('lighting-section')">
+                    <span class="section-icon">&#x1F4A1;</span> Lighting
+                    <span class="help-icon" onclick="event.stopPropagation(); showHelp('lighting')">?</span>
+                    <span class="chevron">&#x25BC;</span>
+                </h3>
+                <div id="lighting-section" class="collapsible-content">
+                    <label for="light-brightness">
+                        <span class="label-icon">&#x2600;&#xFE0F;</span> Brightness: <span id="brightness-value">60</span>%
+                    </label>
+                    <input type="range" id="light-brightness" min="30" max="150" value="60" step="5" oninput="updateLighting()">
+
+                    <label for="shadow-softness">
+                        <span class="label-icon">&#x1F32B;&#xFE0F;</span> Shadow Softness: <span id="shadow-value">30</span>%
+                    </label>
+                    <input type="range" id="shadow-softness" min="0" max="100" value="30" step="5" oninput="updateLighting()">
+
+                    <label for="detail-level">
+                        <span class="label-icon">&#x1F50D;</span> Layer Detail: <span id="detail-value">50</span>%
+                    </label>
+                    <input type="range" id="detail-level" min="0" max="100" value="50" step="5" oninput="updateLighting()">
+
+                    <div style="margin-top: 10px;">
+                        <label style="font-size: 12px; color: #888; margin-bottom: 5px; display: block;">Presets:</label>
+                        <div style="display: flex; gap: 5px; flex-wrap: wrap;">
+                            <button class="btn btn-small" onclick="applyLightingPreset('layers')">Layers</button>
+                            <button class="btn btn-small" onclick="applyLightingPreset('soft')">Soft</button>
+                            <button class="btn btn-small" onclick="applyLightingPreset('studio')">Studio</button>
+                            <button class="btn btn-small" onclick="applyLightingPreset('flat')">Flat</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div><!-- End controls-panel -->
+
+        <!-- 3D Viewport -->
+        <div id="viewport-container">
+            <canvas id="renderCanvas"></canvas>
+
+            <!-- Floating HUD (upper-right) -->
+            <div id="printer-hud">
+                <div class="hud-header">
+                    <span class="hud-title">Printer Status <span class="help-icon help-icon-sm" onclick="showHelp('printer-status')">?</span></span>
+                    <button class="hud-minimize" onclick="toggleHUD()">_</button>
+                </div>
+                <div class="hud-body">
+                    <div class="hud-row">
+                        <span>Layer</span>
+                        <span class="hud-value" id="hud-layer">0/0</span>
+                    </div>
+                    <div class="hud-row">
+                        <span>Line</span>
+                        <span class="hud-value" id="hud-line">0/0</span>
+                    </div>
+                    <div class="hud-row hud-position-row">
+                        <span>Position</span>
+                        <span class="hud-value hud-pos-values">
+                            <span class="hud-coord">X:<span id="hud-pos-x">0.0</span></span>
+                            <span class="hud-coord">Y:<span id="hud-pos-y">0.0</span></span>
+                            <span class="hud-coord">Z:<span id="hud-pos-z">0.0</span></span>
+                        </span>
+                    </div>
+                    <div class="hud-row">
+                        <span>Status</span>
+                        <span class="hud-value" id="hud-status">Idle</span>
+                    </div>
+                    <div class="hud-row">
+                        <span>Hotend</span>
+                        <span class="hud-value" id="hud-temp">20&#xB0;C</span>
+                    </div>
+                    <div class="hud-row">
+                        <span>Bed</span>
+                        <span class="hud-value" id="hud-bed-temp">20&#xB0;C</span>
+                    </div>
+                    <div class="hud-progress">
+                        <div class="hud-progress-fill" id="hud-progress-fill"></div>
+                    </div>
+                    <div class="hud-percent" id="hud-percent">0%</div>
+                </div>
+            </div>
+
+        </div>
+        </div><!-- End workspace -->
+
+        <!-- Bottom Dock -->
+        <div id="bottom-dock">
+            <div class="dock-resize-handle"></div>
+            <div id="dock-header">
+                <div class="dock-tabs">
+                    <div class="dock-tab active" data-tab="settings" onclick="switchDockTab('settings')">Slicer Settings <span class="help-icon help-icon-sm" onclick="event.stopPropagation(); showHelp('slicer')">?</span></div>
+                    <div class="dock-tab" data-tab="gcode" onclick="switchDockTab('gcode')">G-code Viewer <span class="help-icon help-icon-sm" onclick="event.stopPropagation(); showHelp('gcode')">?</span></div>
+                </div>
+                <button class="dock-toggle" onclick="toggleDock()">&#x25BC;</button>
+            </div>
+            <div id="dock-content">
+                <!-- Settings Panel Tab -->
+                <div class="dock-panel active" id="dock-settings-panel">
+                    <!-- Compact Toolbar -->
+                    <div class="dock-toolbar">
+                        <!-- Slice & Playback Group -->
+                        <div class="toolbar-group">
+                            <button id="slice-btn" class="btn btn-primary btn-sm" disabled>&#x1F52A; Slice</button>
+                            <button id="play-btn" class="btn btn-sm" disabled>&#x25B6; Print</button>
+                            <button id="pause-btn" class="btn btn-sm" disabled>&#x23F8;</button>
+                            <button id="reset-btn" class="btn btn-sm">&#x21BB;</button>
+                        </div>
+                        <div class="toolbar-divider"></div>
+                        <!-- Speed Group -->
+                        <div class="toolbar-group">
+                            <label class="inline-checkbox"><input type="checkbox" id="quick-print"> &#x26A1; Quick</label>
+                            <label class="inline-setting">Speed:<input type="range" id="speed-slider" min="0.01" max="100" step="0.01" value="1.0"><span id="speed-value">1.0</span>x</label>
+                        </div>
+                        <div class="toolbar-divider"></div>
+                        <!-- Settings Group -->
+                        <div class="toolbar-group grow">
+                            <select id="dock-quality-preset" class="sm" title="Quality">
+                                <option value="fast">Fast</option>
+                                <option value="normal" selected>Normal</option>
+                                <option value="detailed">Detailed</option>
+                            </select>
+                            <select id="dock-infill-pattern" class="sm" title="Infill Pattern">
+                                <option value="grid">Grid</option>
+                                <option value="lines">Lines</option>
+                                <option value="honeycomb">Honeycomb</option>
+                                <option value="concentric">Concentric</option>
+                            </select>
+                            <label class="inline-setting">Infill:<input type="range" id="dock-infill-density" min="0" max="100" step="5" value="20" class="sm-range"><span id="dock-infill-density-value">20</span>%</label>
+                            <label class="inline-setting">Layer:<input type="range" id="dock-layer-height" min="0.1" max="0.4" step="0.05" value="0.2" class="sm-range"><span id="dock-layer-height-value">0.2</span>mm</label>
+                            <select id="dock-filament-type" class="sm" title="Filament Type">
+                                <option value="pla" selected>PLA</option>
+                                <option value="petg">PETG</option>
+                                <option value="abs">ABS</option>
+                                <option value="tpu">TPU</option>
+                            </select>
+                        </div>
+                        <div class="toolbar-divider"></div>
+                        <!-- Export -->
+                        <div class="toolbar-group">
+                            <button id="export-stl-btn" class="btn btn-success btn-sm">&#x1F4BE; Export</button>
+                        </div>
+                    </div>
+                    <!-- Hidden inputs to maintain compatibility -->
+                    <input type="hidden" id="dock-line-thickness" value="0.4">
+                    <input type="hidden" id="dock-shell-layers" value="3">
+                    <input type="hidden" id="dock-hotend-temp" value="200">
+                    <input type="hidden" id="dock-bed-temp" value="60">
+                </div>
+                <!-- G-code Viewer Tab -->
+                <div class="dock-panel" id="dock-gcode-panel">
+                    <div id="dock-gcode-header">
+                        <label class="gcode-option"><input type="checkbox" id="live-gcode-tracking"> Live tracking during print</label>
+                    </div>
+                    <div id="dock-gcode-content">
+                        <pre id="dock-gcode-display">No G-code loaded</pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Format Modal -->
+    <div id="export-modal" class="modal">
+        <div class="modal-content" style="max-width: 700px;">
+            <h2>Export Build Plate Models</h2>
+            <p style="background: rgba(187, 134, 252, 0.1); padding: 10px; border-radius: 5px; border-left: 3px solid #bb86fc; margin-bottom: 15px;">
+                <strong>Info:</strong> This exports your original STL models from the build plate with their current positions, rotations, and scales. All models will be merged into a single file.
+            </p>
+
+            <!-- Export to My Assets Section -->
+            <h3 style="margin-top: 20px; margin-bottom: 10px; color: #bb86fc; border-bottom: 1px solid #333; padding-bottom: 8px;">
+                <span style="margin-right: 8px;">&#x1F4C1;</span> Export to My Assets
+            </h3>
+            <p style="color: #888; font-size: 12px; margin-bottom: 10px;">Save to your files for use in other applications</p>
+
+            <!-- Filename input -->
+            <div style="margin-bottom: 15px;">
+                <label for="export-filename" style="color: #ccc; font-size: 13px; display: block; margin-bottom: 5px;">Asset Name:</label>
+                <input type="text" id="export-filename" placeholder="Enter filename (without extension)"
+                    style="width: 100%; padding: 10px 12px; background: #0f3460; border: 2px solid #1e4976; border-radius: 6px; color: #fff; font-size: 14px; box-sizing: border-box;"
+                    onfocus="this.style.borderColor='#bb86fc'" onblur="this.style.borderColor='#1e4976'">
+            </div>
+
+            <div class="format-options" style="margin-bottom: 20px;">
+                <div class="format-option" onclick="exportToAssets('stl')">
+                    <div class="format-icon">&#x1F4C4;</div>
+                    <h3>STL to Assets</h3>
+                    <p>Save STL file to your files</p>
+                    <ul>
+                        <li>Universal compatibility</li>
+                        <li>Use in other 3D apps</li>
+                    </ul>
+                </div>
+
+                <div class="format-option" onclick="exportToAssets('glb')">
+                    <div class="format-icon">&#x1F3A8;</div>
+                    <h3>GLB to Assets</h3>
+                    <p>Save GLB file with colors to your files</p>
+                    <ul>
+                        <li>Preserves colors</li>
+                        <li>View in file manager</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Export to Computer Section -->
+            <h3 style="margin-top: 20px; margin-bottom: 10px; color: #03dac6; border-bottom: 1px solid #333; padding-bottom: 8px;">
+                <span style="margin-right: 8px;">&#x1F4BB;</span> Export to Computer
+            </h3>
+            <p style="color: #888; font-size: 12px; margin-bottom: 10px;">Download to your computer for use in external software</p>
+            <div class="format-options">
+                <div class="format-option" onclick="exportModel('stl')">
+                    <div class="format-icon">&#x1F4C4;</div>
+                    <h3>STL Download</h3>
+                    <p>Standard 3D printing format</p>
+                    <ul>
+                        <li>Works with all slicers</li>
+                        <li>Text-based (ASCII)</li>
+                    </ul>
+                </div>
+
+                <div class="format-option" onclick="exportModel('gltf')">
+                    <div class="format-icon">&#x1F3A8;</div>
+                    <h3>GLB Download</h3>
+                    <p>Modern format with colors</p>
+                    <ul>
+                        <li>Web-friendly</li>
+                        <li>Includes materials</li>
+                    </ul>
+                </div>
+            </div>
+
+            <button class="btn" onclick="closeExportModal()" style="margin-top: 15px;">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div id="help-modal" class="modal">
+        <div class="modal-content help-modal-content">
+            <div class="help-modal-header">
+                <h2 id="help-modal-title">Help</h2>
+                <button class="help-close-btn" onclick="closeHelpModal()">&times;</button>
+            </div>
+            <div id="help-modal-body" class="help-modal-body">
+                <!-- Content inserted by JavaScript -->
+            </div>
+        </div>
+    </div>
+
+    <script src="js/GCodeParser.js"></script>
+    <script src="js/GCodeGenerator.js"></script>
+    <script src="js/STLSlicer.js"></script>
+    <script src="js/PrinterSimulator.js"></script>
+    <script src="js/main.js"></script>
+
+    <script>
+    // Help content database
+    const helpContent = {
+        '3d-printing': {
+            title: '&#x1F5A8;&#xFE0F; What is 3D Printing?',
+            content: '<div class="help-section"><h3>How 3D Printing Works</h3><p>3D printing, also called <strong>additive manufacturing</strong>, creates physical objects by building them up <strong>layer by layer</strong> from the bottom up.</p></div><div class="help-section"><h3>Camera Controls</h3><ul><li><strong>Left-click + drag:</strong> Rotate the view</li><li><strong>Right-click + drag:</strong> Pan (move) the view</li><li><strong>Scroll wheel:</strong> Zoom in and out</li></ul></div>'
+        },
+        'shapes': {
+            title: '&#x1F3B2; Shape Generator',
+            content: '<div class="help-section"><h3>Available Shapes</h3><p><strong>Cube</strong> - A box shape. Great for learning layers and infill.</p><p><strong>Cylinder</strong> - A round tube. Shows how printers create curves.</p><p><strong>Pyramid</strong> - Gets smaller going up. Shows shrinking layers.</p></div>'
+        },
+        'infill': {
+            title: '&#x2699;&#xFE0F; Infill Patterns & Density',
+            content: '<div class="help-section"><h3>What is Infill?</h3><p>Infill is the <strong>internal structure</strong> inside a 3D printed object. Patterns include Grid, Honeycomb, Lines, Concentric, and Zigzag.</p><p>More infill = stronger but slower to print.</p></div>'
+        },
+        'layers': {
+            title: '&#x1F441;&#xFE0F; Understanding Layers',
+            content: '<div class="help-section"><h3>How Layers Work</h3><p>Every 3D printed object is made of <strong>thin horizontal slices</strong> stacked on top of each other.</p><p>Use Step-Through Mode to watch each layer being printed one at a time.</p></div>'
+        },
+        'filament': {
+            title: '&#x1F3A8; Filament',
+            content: '<div class="help-section"><h3>Common Types</h3><p><strong>PLA</strong> - Easy, biodegradable. <strong>PETG</strong> - Strong, flexible. <strong>ABS</strong> - Heat resistant. <strong>TPU</strong> - Flexible/rubbery.</p></div>'
+        },
+        'stl': {
+            title: '&#x1F4C1; STL Files',
+            content: '<div class="help-section"><h3>What is an STL File?</h3><p>STL is the most common 3D printing format. It describes surfaces using triangles. Load STL files to slice and print them.</p></div>'
+        },
+        'buildplate': {
+            title: '&#x1F5C2;&#xFE0F; Build Plate',
+            content: '<div class="help-section"><h3>Build Plate</h3><p>The 200mm x 200mm surface where prints are created. You can load multiple models at once.</p></div>'
+        },
+        'transform': {
+            title: '&#x1F3AF; Position & Scale',
+            content: '<div class="help-section"><h3>Controls</h3><p>Move (X/Y/Z), rotate, and scale your models. Use 3D gizmos for interactive manipulation. Drop to Build Plate aligns the bottom to Z=0.</p></div>'
+        },
+        'appearance': {
+            title: '&#x1F3A8; Appearance',
+            content: '<div class="help-section"><p>Choose filament color, enable rainbow layers, toggle 3D cylinders mode, and show/hide the print head and build plate.</p></div>'
+        },
+        'printer-status': {
+            title: '&#x1F4CA; Printer Status',
+            content: '<div class="help-section"><p>Shows current layer, line, position, status, temperatures, and progress during printing.</p></div>'
+        },
+        'slicer': {
+            title: '&#x1F52A; Slicer Settings',
+            content: '<div class="help-section"><h3>Slicing</h3><p>Converts 3D models into G-code instructions. Adjust quality, infill pattern, density, layer height, and filament type.</p></div>'
+        },
+        'gcode': {
+            title: '&#x1F4DC; G-code Viewer',
+            content: '<div class="help-section"><h3>G-code</h3><p>The language that tells 3D printers what to do. G0 = move, G1 = extrude, M104 = set temperature. Enable live tracking to follow along during prints.</p></div>'
+        },
+        'lighting': {
+            title: '&#x1F4A1; Lighting',
+            content: '<div class="help-section"><p>Adjust brightness, shadow softness, and layer detail. Try presets: Layers, Soft, Studio, or Flat.</p></div>'
+        }
+    };
+
+    // Show help modal
+    function showHelp(topic) {
+        const help = helpContent[topic];
+        if (!help) return;
+
+        document.getElementById('help-modal-title').innerHTML = help.title;
+        document.getElementById('help-modal-body').innerHTML = help.content;
+        document.getElementById('help-modal').style.display = 'flex';
+    }
+
+    // Close help modal
+    function closeHelpModal() {
+        document.getElementById('help-modal').style.display = 'none';
+    }
+
+    // Close modal when clicking outside
+    document.getElementById('help-modal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeHelpModal();
+        }
+    });
+
+    // Close modal with Escape key
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && document.getElementById('help-modal').style.display === 'flex') {
+            closeHelpModal();
+        }
+    });
+    </script>
+</body>
+</html>
