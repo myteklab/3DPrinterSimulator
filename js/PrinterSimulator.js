@@ -1217,7 +1217,7 @@ class PrinterSimulator {
      * This re-renders all geometry with higher tessellation and capped ends
      * to match the preview quality and give a more realistic printed look
      */
-    finalQualityRender() {
+    finalQualityRender(lightweight) {
         // Use allPathSegments which contains ALL segments (not cleared during freezing)
         const allSegments = [...this.allPathSegments];
         // Also add current segment if it has points
@@ -1252,7 +1252,7 @@ class PrinterSimulator {
         // Calculate emissive from lighting settings
         const emissiveStrength = 1 - this.lightingSettings.detailLevel;
 
-        // Create high-quality material
+        // Create material
         const finalMaterial = new BABYLON.StandardMaterial("finalPrintMaterial", this.scene);
         finalMaterial.diffuseColor = colorToUse.clone();
         finalMaterial.emissiveColor = new BABYLON.Color3(
@@ -1263,7 +1263,12 @@ class PrinterSimulator {
         finalMaterial.specularColor = new BABYLON.Color3(0, 0, 0);
         finalMaterial.backFaceCulling = false;
 
-        // Create high-quality tubes with capped ends
+        // Lightweight mode: tessellation 4, no caps (restore)
+        // Full mode: tessellation 6, capped ends (after live print)
+        const tessellation = lightweight ? 4 : 6;
+        const cap = lightweight ? BABYLON.Mesh.NO_CAP : BABYLON.Mesh.CAP_ALL;
+
+        // Create tubes
         const tubeMeshes = [];
         for (let i = 0; i < allSegments.length; i++) {
             const segment = allSegments[i];
@@ -1273,8 +1278,8 @@ class PrinterSimulator {
                 const tube = BABYLON.MeshBuilder.CreateTube(`final_segment_${i}`, {
                     path: segment,
                     radius: radius,
-                    tessellation: 6,  // Higher quality (hexagonal cross-section)
-                    cap: BABYLON.Mesh.CAP_ALL,  // Capped ends for solid look
+                    tessellation: tessellation,
+                    cap: cap,
                     updatable: false
                 }, this.scene);
                 tube.material = finalMaterial;
@@ -1586,10 +1591,13 @@ class PrinterSimulator {
                 // NOW update the mesh once with all geometry
                 this.updateLineMesh();
 
-                // Perform final high-quality render (3D tubes) for realistic appearance
-                // Skip on restore — line mesh is sufficient and much lighter on GPU
-                if (!this._skipFinalRender) {
-                    this.finalQualityRender();
+                // Perform final render
+                if (this._skipFinalRender) {
+                    // Lightweight render on restore — tessellation 4, no caps
+                    this.finalQualityRender(true);
+                } else {
+                    // Full quality after live print — tessellation 6, capped ends
+                    this.finalQualityRender(false);
                 }
 
                 // Hide print head since print is complete
