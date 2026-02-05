@@ -522,7 +522,7 @@ async function handleSTLUpload(event) {
         event.target.value = '';
     } catch (error) {
         console.error('Error loading STL:', error);
-        alert(`Error loading STL: ${error.message}`);
+        showToast(`Error loading STL: ${error.message}`, 'error', 4000);
     }
 }
 
@@ -534,7 +534,7 @@ async function loadSTLFromURL() {
     const url = urlInput.value.trim();
 
     if (!url) {
-        alert('Please enter a URL to an STL file');
+        showToast('Please enter a URL to an STL file', 'error', 3000);
         return;
     }
 
@@ -655,7 +655,7 @@ async function loadSTLFromURLCore(url) {
 
     } catch (error) {
         console.error('Error loading STL from URL:', error);
-        alert(`Error loading STL from URL:\n${error.message}\n\nMake sure the URL is accessible and points to a valid STL file.`);
+        showToast(`Error loading STL from URL: ${error.message}`, 'error', 4000);
     } finally {
         loadBtn.disabled = false;
         loadBtn.textContent = originalText;
@@ -781,7 +781,7 @@ async function sliceSTL() {
         console.log(`Combined mesh Z range: ${minZ.toFixed(2)} to ${maxZ.toFixed(2)}`);
 
         if (minZ < -0.1) { // Allow tiny tolerance for floating point
-            alert(`Error: Model extends below build plate!\n\nLowest point: ${minZ.toFixed(2)}mm\n\nPlease use "Drop to Build Plate" to fix positioning.`);
+            showToast(`Model extends below build plate (${minZ.toFixed(2)}mm). Use "Drop to Build Plate" to fix.`, 'error', 4000);
             sliceBtn.disabled = false;
             sliceBtn.textContent = `🔪 Slice`;
             return;
@@ -1144,7 +1144,7 @@ function loadGCode(gcodeText) {
     const commands = parser.parse(gcodeText);
 
     if (commands.length === 0) {
-        alert('No valid G-code commands found!');
+        showToast('No valid G-code commands found!', 'error', 3000);
         return;
     }
 
@@ -1269,7 +1269,7 @@ function updateGCodeHighlight(commandIndex) {
  */
 function playSimulation() {
     if (!simulator.commands || simulator.commands.length === 0) {
-        alert('Please load a G-code file first!');
+        showToast('Please load a G-code file first!', 'error', 3000);
         return;
     }
 
@@ -1496,7 +1496,7 @@ async function saveScreenshot(showFeedback = false) {
  */
 function exportSTL() {
     if (!simulator) {
-        alert('Simulator not initialized!');
+        showToast('Simulator not initialized!', 'error', 3000);
         return;
     }
 
@@ -1531,7 +1531,7 @@ function exportModel(format) {
     closeExportModal();
 
     if (!simulator) {
-        alert('Simulator not initialized!');
+        showToast('Simulator not initialized!', 'error', 3000);
         return;
     }
 
@@ -1543,7 +1543,7 @@ function exportModel(format) {
         }
     } catch (error) {
         console.error('Export failed:', error);
-        alert('Failed to export model: ' + error.message);
+        showToast('Failed to export model: ' + error.message, 'error', 4000);
     }
 }
 
@@ -2411,7 +2411,7 @@ function changeGizmoType(type) {
 function dropToBuildPlate() {
     const model = loadedModels.find(m => m.id === selectedModelId);
     if (!model || !model.previewMesh) {
-        alert('Please select a model first');
+        showToast('Please select a model first', 'error', 3000);
         return;
     }
 
@@ -2885,7 +2885,7 @@ function playLearningMode() {
     const playBtn = document.getElementById('learn-play-btn');
 
     if (!simulator.commands || simulator.commands.length === 0) {
-        alert('Please generate a shape first!');
+        showToast('Please generate a shape first!', 'error', 3000);
         return;
     }
 
