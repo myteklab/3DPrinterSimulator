@@ -68,7 +68,6 @@ class PrinterSimulator {
         this.totalPointCount = 0; // Running counter for rainbow mode layer calculation
         this.frozenMaterial = null; // Shared material for all frozen segments (non-rainbow)
         this.activeMaterial = null; // Cached material for the active segment
-        this._pendingFreezeSegments = []; // Segments waiting to be batch-frozen into geometry
         this._resizeHandler = null; // Stored so we don't leak listeners
 
         // Print interaction (click-to-remove after print completes)
@@ -505,7 +504,6 @@ class PrinterSimulator {
         this.currentSegment = [];
         this.updateCounter = 0;
         this.totalPointCount = 0; // Reset running point counter
-        this._pendingFreezeSegments = []; // Clear pending freeze queue
         this.lockedPrintColor = null; // Unlock color when clearing
 
         // Dispose cached materials
@@ -577,11 +575,14 @@ class PrinterSimulator {
         if (!this.isPlaying || this.currentCommandIndex >= this.commands.length) {
             if (this.currentCommandIndex >= this.commands.length) {
                 this.isPlaying = false;
-                // Freeze final segment and flush all pending geometry
+                // Freeze final segment
                 if (this.currentSegment.length > 1) {
-                    this.freezeSegment();
+                    const segmentCopy = [...this.currentSegment];
+                    this.allPathSegments.push(segmentCopy);
+                    this.freezeSegment(segmentCopy);
+                    this.currentSegment = [];
+                    this.lastSegmentCount = 0;
                 }
-                this._flushPendingFreezes();
                 // Merge frozen meshes for final result (fewer draw calls)
                 this.mergeFrozenMeshes();
                 this.enablePrintInteraction();
@@ -664,7 +665,11 @@ class PrinterSimulator {
 
                     // Handle segment breaks for travel moves
                     if (!command.extruding && this.currentSegment.length > 1) {
-                        this.freezeSegment();
+                        const segmentCopy = [...this.currentSegment];
+                        this.allPathSegments.push(segmentCopy);
+                        this.freezeSegment(segmentCopy);
+                        this.currentSegment = [];
+                        this.lastSegmentCount = 0;
                     }
                 }
 
@@ -727,9 +732,8 @@ class PrinterSimulator {
             });
         }
 
-        // Update geometry once per frame (not per command)
+        // Update active segment mesh once per frame
         this.updateLineMesh();
-        this._flushPendingFreezes();
 
         // Continue animation
         requestAnimationFrame(() => this.animate());
@@ -862,13 +866,13 @@ class PrinterSimulator {
 
             // Break the current segment - freeze it as static geometry
             if (this.useLineRendering && this.currentSegment.length > 1) {
-                if (this.isQuickPrinting) {
-                    // During quick print, just save segment data (no geometry)
-                    this.allPathSegments.push([...this.currentSegment]);
-                    this.currentSegment = [];
-                } else {
-                    this.freezeSegment();
+                const segmentCopy = [...this.currentSegment];
+                this.allPathSegments.push(segmentCopy);
+                if (!this.isQuickPrinting) {
+                    this.freezeSegment(segmentCopy);
                 }
+                this.currentSegment = [];
+                this.lastSegmentCount = 0;
             }
         }
     }
@@ -1024,122 +1028,89 @@ class PrinterSimulator {
     }
 
     /**
-     * Mark the current segment as complete — saves its path data for later
-     * batch-freezing. No geometry is created here; that happens in
-     * _flushPendingFreezes() once per animation frame.
+     * Freeze a completed segment as static geometry.
+     * Creates one tube, freezes its world matrix, pushes to frozenMeshes[].
+     * Caller is responsible for copying segment data and clearing currentSegment.
+     * @param {BABYLON.Vector3[]} segment — path points for the tube
      */
-    freezeSegment() {
-        if (this.currentSegment.length < 2) return;
-
-        const segmentCopy = [...this.currentSegment];
-        this.allPathSegments.push(segmentCopy);
-        this._pendingFreezeSegments.push(segmentCopy);
-
-        // Dispose stale active mesh (it still shows the old currentSegment data)
-        if (this.lineMesh) {
-            this.lineMesh.dispose();
-            this.lineMesh = null;
-        }
-
-        // Reset current segment
-        this.currentSegment = [];
-    }
-
-    /**
-     * Batch-create frozen tube geometry from all pending segments.
-     * Called once per animation frame to amortize CreateTube cost.
-     */
-    _flushPendingFreezes() {
-        if (this._pendingFreezeSegments.length === 0) return;
+    freezeSegment(segment) {
+        if (!segment || segment.length < 2) return;
 
         const radius = this.lineThickness / 2;
         const colorToUse = this.lockedPrintColor || this.filamentColor;
         const emissiveStrength = 1 - this.lightingSettings.detailLevel;
 
-        // Ensure shared frozen material exists (non-rainbow)
-        if (!this.rainbowMode && !this.frozenMaterial) {
-            this.frozenMaterial = new BABYLON.StandardMaterial("frozenPrintMaterial", this.scene);
-            this.frozenMaterial.diffuseColor = colorToUse.clone();
-            this.frozenMaterial.emissiveColor = new BABYLON.Color3(
-                colorToUse.r * emissiveStrength,
-                colorToUse.g * emissiveStrength,
-                colorToUse.b * emissiveStrength
+        let material;
+        if (this.rainbowMode) {
+            const currentLayer = Math.floor(this.currentCommandIndex / 100);
+            const layerColor = this.getLayerColor(currentLayer);
+            material = new BABYLON.StandardMaterial(`frozenRainbow_${this.frozenMeshes.length}`, this.scene);
+            material.diffuseColor = layerColor;
+            material.emissiveColor = new BABYLON.Color3(
+                layerColor.r * emissiveStrength,
+                layerColor.g * emissiveStrength,
+                layerColor.b * emissiveStrength
             );
-            this.frozenMaterial.specularColor = new BABYLON.Color3(0, 0, 0);
-            this.frozenMaterial.backFaceCulling = false;
-            this.frozenMaterial.freeze();
-        }
-
-        // Create tubes for all pending segments in one batch
-        const tubeMeshes = [];
-        for (let i = 0; i < this._pendingFreezeSegments.length; i++) {
-            const segment = this._pendingFreezeSegments[i];
-            if (segment.length < 2) continue;
-
-            let material;
-            if (this.rainbowMode) {
-                const currentLayer = Math.floor((this.frozenMeshes.length + i) * 3);
-                const layerColor = this.getLayerColor(currentLayer);
-                material = new BABYLON.StandardMaterial(`frozen_rainbow_${this.frozenMeshes.length + i}`, this.scene);
-                material.diffuseColor = layerColor;
-                material.emissiveColor = new BABYLON.Color3(
-                    layerColor.r * emissiveStrength,
-                    layerColor.g * emissiveStrength,
-                    layerColor.b * emissiveStrength
+            material.specularColor = new BABYLON.Color3(0, 0, 0);
+            material.backFaceCulling = false;
+            material.freeze();
+        } else {
+            if (!this.frozenMaterial) {
+                this.frozenMaterial = new BABYLON.StandardMaterial("frozenPrintMat", this.scene);
+                this.frozenMaterial.diffuseColor = colorToUse.clone();
+                this.frozenMaterial.emissiveColor = new BABYLON.Color3(
+                    colorToUse.r * emissiveStrength,
+                    colorToUse.g * emissiveStrength,
+                    colorToUse.b * emissiveStrength
                 );
-                material.specularColor = new BABYLON.Color3(0, 0, 0);
-                material.backFaceCulling = false;
-                material.freeze();
-            } else {
-                material = this.frozenMaterial;
+                this.frozenMaterial.specularColor = new BABYLON.Color3(0, 0, 0);
+                this.frozenMaterial.backFaceCulling = false;
+                this.frozenMaterial.freeze();
             }
-
-            try {
-                const tube = BABYLON.MeshBuilder.CreateTube(`frozen_seg_${this.frozenMeshes.length + i}`, {
-                    path: segment,
-                    radius: radius,
-                    tessellation: 3,
-                    cap: BABYLON.Mesh.NO_CAP,
-                    updatable: false
-                }, this.scene);
-                tube.material = material;
-                tubeMeshes.push(tube);
-            } catch (e) {
-                // Skip invalid segments
-            }
+            material = this.frozenMaterial;
         }
 
-        this._pendingFreezeSegments = [];
-
-        // Merge the batch into one frozen mesh (single draw call)
-        if (tubeMeshes.length > 0) {
-            let batchMesh;
-            if (tubeMeshes.length === 1) {
-                batchMesh = tubeMeshes[0];
-            } else {
-                batchMesh = BABYLON.Mesh.MergeMeshes(tubeMeshes, true, true, undefined, false, true);
+        try {
+            const tube = BABYLON.MeshBuilder.CreateTube(`frozenSeg_${this.frozenMeshes.length}`, {
+                path: segment,
+                radius: radius,
+                tessellation: 3,
+                cap: BABYLON.Mesh.NO_CAP,
+                updatable: false
+            }, this.scene);
+            tube.material = material;
+            tube.renderingGroupId = 1;
+            tube.isPickable = false;
+            tube.freezeWorldMatrix();
+            this.frozenMeshes.push(tube);
+            if (this.frozenMeshes.length > 15) {
+                this.mergeFrozenMeshes();
             }
-            if (batchMesh) {
-                batchMesh.renderingGroupId = 1;
-                batchMesh.isPickable = false;
-                batchMesh.freezeWorldMatrix();
-                this.frozenMeshes.push(batchMesh);
-
-                // Consolidate all frozen meshes periodically
-                if (this.frozenMeshes.length > 10) {
-                    this.mergeFrozenMeshes();
-                }
-            }
+        } catch (e) {
+            // Skip invalid segments
         }
     }
 
     /**
-     * Update the active segment mesh (current in-progress segment only)
-     * O(1) cost regardless of print complexity
+     * Update the active segment mesh (current in-progress segment only).
+     * Skips rebuild when segment length unchanged. O(1) cost.
      */
     updateLineMesh() {
-        // Only render the current in-progress segment
-        if (this.currentSegment.length < 2) return;
+        // If segment is empty/too short, dispose stale mesh and bail
+        if (this.currentSegment.length < 2) {
+            if (this.lineMesh) {
+                this.lineMesh.dispose();
+                this.lineMesh = null;
+            }
+            return;
+        }
+
+        // Skip rebuild if segment hasn't grown since last call
+        const segLen = this.currentSegment.length;
+        if (this.lineMesh && segLen === this.lastSegmentCount) {
+            return;
+        }
+        this.lastSegmentCount = segLen;
 
         // Dispose old active mesh
         if (this.lineMesh) {
@@ -1153,12 +1124,12 @@ class PrinterSimulator {
 
         // Create or reuse the active material
         if (!this.activeMaterial) {
-            this.activeMaterial = new BABYLON.StandardMaterial("activePrintMaterial", this.scene);
+            this.activeMaterial = new BABYLON.StandardMaterial("activePrintMat", this.scene);
             this.activeMaterial.specularColor = new BABYLON.Color3(0, 0, 0);
             this.activeMaterial.backFaceCulling = false;
         }
 
-        // Update color on the cached material
+        // Update color on cached material
         if (this.rainbowMode) {
             const currentLayer = Math.floor(this.totalPointCount / 100);
             const layerColor = this.getLayerColor(currentLayer);
@@ -1177,21 +1148,20 @@ class PrinterSimulator {
             );
         }
 
-        // Create a single tube for the current segment only — O(1)
+        // Create a single tube for the current segment only
         try {
-            this.lineMesh = BABYLON.MeshBuilder.CreateTube("active_segment", {
+            this.lineMesh = BABYLON.MeshBuilder.CreateTube("activePrint", {
                 path: this.currentSegment,
                 radius: radius,
-                tessellation: 3,
+                tessellation: 4,
                 cap: BABYLON.Mesh.NO_CAP,
                 updatable: false
             }, this.scene);
-
             this.lineMesh.material = this.activeMaterial;
             this.lineMesh.renderingGroupId = 1;
             this.lineMesh.isPickable = false;
         } catch (e) {
-            // Skip invalid segments
+            this.lineMesh = null;
         }
     }
 
