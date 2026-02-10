@@ -37,6 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Set up progress callback
     simulator.onProgress = updateProgress;
     simulator.onComplete = onPrintComplete;
+    simulator.onPrintRemoved = onPrintRemoved;
 
     // Set up click-to-select on canvas
     canvas.addEventListener('click', handleCanvasClick);
@@ -1424,6 +1425,14 @@ function onPrintComplete() {
     setTimeout(() => {
         saveScreenshot();
     }, 500);
+}
+
+/**
+ * Called when a finished print is removed from the bed via click interaction
+ */
+function onPrintRemoved() {
+    isPrintComplete = false;
+    showToast('Print removed from bed', 'info', 2000);
 }
 
 /**
