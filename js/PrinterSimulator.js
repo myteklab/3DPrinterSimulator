@@ -30,11 +30,14 @@ class PrinterSimulator {
         this.currentSegment = []; // Current segment being built
         this.lineMesh = null; // Single updateable line mesh
         this.updateCounter = 0; // Counter to batch updates
+        this.totalPointCount = 0; // Running counter of points across all active segments (avoids .reduce())
         this.lineThickness = 0.4; // Nozzle diameter in mm (default 0.4mm - standard size)
         this.filamentColor = new BABYLON.Color3(1, 0.42, 0.21); // Default orange
         this.lockedPrintColor = null; // Color locked at start of print to prevent mid-print changes
         this.rainbowMode = false; // Rainbow layers for learning
         this.printMaterial = null; // Reusable material for print mesh
+        this.activeMaterial = null; // Cached material for active tube mesh
+        this.frozenMaterial = null; // Shared material for all frozen geometry (non-rainbow)
         this.frameAccumulator = 0; // For handling fractional speeds
         this.lastFrameTime = 0;
         this.printHeadPosition = new BABYLON.Vector3(0, 20, 0); // Current smooth position
@@ -65,16 +68,6 @@ class PrinterSimulator {
         // Performance optimization - freeze old geometry
         this.maxActiveSegments = 20; // REDUCED: Maximum segments to rebuild each frame (was 30)
         this.frozenMeshes = []; // Array of frozen geometry meshes
-        this.totalPointCount = 0; // Running counter for rainbow mode layer calculation
-        this.frozenMaterial = null; // Shared material for all frozen segments (non-rainbow)
-        this.activeMaterial = null; // Cached material for the active segment
-        this._resizeHandler = null; // Stored so we don't leak listeners
-
-        // Print interaction (click-to-remove after print completes)
-        this.printObserver = null;
-        this.removePopup = null;
-        this.highlightedMesh = null;
-        this.onPrintRemoved = null;
 
         this.initScene();
         this.startRenderLoop();
@@ -456,21 +449,34 @@ class PrinterSimulator {
         // Clean up print interaction if active
         this.disablePrintInteraction();
 
-        // Dispose single line mesh
+        // Dispose active tube mesh
         if (this.lineMesh) {
             this.lineMesh.dispose();
             this.lineMesh = null;
         }
 
-        // Dispose frozen meshes and their materials
+        // Dispose cached active material
+        if (this.activeMaterial) {
+            this.activeMaterial.dispose();
+            this.activeMaterial = null;
+        }
+
+        // Dispose frozen meshes (meshes only — shared material disposed separately)
         if (this.frozenMeshes) {
             this.frozenMeshes.forEach(mesh => {
+                // Dispose rainbow-specific materials (not the shared frozenMaterial)
                 if (mesh.material && mesh.material !== this.frozenMaterial) {
                     mesh.material.dispose();
                 }
                 mesh.dispose();
             });
             this.frozenMeshes = [];
+        }
+
+        // Dispose shared frozen material
+        if (this.frozenMaterial) {
+            this.frozenMaterial.dispose();
+            this.frozenMaterial = null;
         }
 
         // Dispose print material
@@ -503,18 +509,8 @@ class PrinterSimulator {
         this.allPathSegments = []; // Clear permanent segment storage too
         this.currentSegment = [];
         this.updateCounter = 0;
-        this.totalPointCount = 0; // Reset running point counter
+        this.totalPointCount = 0; // Reset running counter
         this.lockedPrintColor = null; // Unlock color when clearing
-
-        // Dispose cached materials
-        if (this.frozenMaterial) {
-            this.frozenMaterial.dispose();
-            this.frozenMaterial = null;
-        }
-        if (this.activeMaterial) {
-            this.activeMaterial.dispose();
-            this.activeMaterial = null;
-        }
 
         // Don't reset print head position here - it will be set correctly in loadCommands() or play()
     }
@@ -575,16 +571,23 @@ class PrinterSimulator {
         if (!this.isPlaying || this.currentCommandIndex >= this.commands.length) {
             if (this.currentCommandIndex >= this.commands.length) {
                 this.isPlaying = false;
-                // Freeze final segment
+                // Freeze final segment before finishing
                 if (this.currentSegment.length > 1) {
                     const segmentCopy = [...this.currentSegment];
                     this.allPathSegments.push(segmentCopy);
                     this.freezeSegment(segmentCopy);
                     this.currentSegment = [];
-                    this.lastSegmentCount = 0;
                 }
-                // Merge frozen meshes for final result (fewer draw calls)
+                // Dispose active tube mesh since everything is now frozen
+                if (this.lineMesh) {
+                    this.lineMesh.dispose();
+                    this.lineMesh = null;
+                }
+                // Frozen geometry is already 3D tubes — no need for expensive
+                // finalQualityRender() which would block UI for seconds rebuilding everything.
+                // Just merge remaining frozen meshes for cleaner draw calls.
                 this.mergeFrozenMeshes();
+                // Enable click-to-remove interaction on the finished print
                 this.enablePrintInteraction();
                 this.onComplete && this.onComplete();
             }
@@ -653,6 +656,7 @@ class PrinterSimulator {
                                 this.currentSegment.push(this.lastInterpolatedPosition.clone());
                             }
                             this.currentSegment.push(to.clone());
+                            this.updateLineMesh();
                         }
                     }
 
@@ -663,7 +667,7 @@ class PrinterSimulator {
                         this.xGantry.position.y = to.y + 8.5;
                     }
 
-                    // Handle segment breaks for travel moves
+                    // Freeze completed segment on travel moves
                     if (!command.extruding && this.currentSegment.length > 1) {
                         const segmentCopy = [...this.currentSegment];
                         this.allPathSegments.push(segmentCopy);
@@ -732,9 +736,6 @@ class PrinterSimulator {
             });
         }
 
-        // Update active segment mesh once per frame
-        this.updateLineMesh();
-
         // Continue animation
         requestAnimationFrame(() => this.animate());
     }
@@ -793,6 +794,9 @@ class PrinterSimulator {
                     // Add the current position
                     this.currentSegment.push(segmentTo);
                     this.totalPointCount++;
+
+                    // Update mesh immediately for smooth appearance at slow speeds
+                    this.updateLineMesh();
 
                     // Track this position for next frame
                     this.lastInterpolatedPosition = segmentTo;
@@ -864,15 +868,16 @@ class PrinterSimulator {
                 this.isRetracted = true;
             }
 
-            // Break the current segment - freeze it as static geometry
+            // Freeze the completed segment immediately as static 3D tube
             if (this.useLineRendering && this.currentSegment.length > 1) {
                 const segmentCopy = [...this.currentSegment];
-                this.allPathSegments.push(segmentCopy);
+                this.allPathSegments.push(segmentCopy); // Keep permanent copy for final render
+                // During quickPrint, skip per-segment freezing — geometry is built in bulk at the end
                 if (!this.isQuickPrinting) {
                     this.freezeSegment(segmentCopy);
                 }
                 this.currentSegment = [];
-                this.lastSegmentCount = 0;
+                this.lastSegmentCount = 0; // Reset so next updateLineMesh knows to rebuild
             }
         }
     }
@@ -899,8 +904,8 @@ class PrinterSimulator {
     }
 
     /**
-     * Add line segment — just collects point data, no geometry creation.
-     * Geometry is created once per frame in animate() via updateLineMesh().
+     * Add line segment (ULTRA FAST - single mesh approach)
+     * Only called when extruding
      */
     addLineSegment(from, to, layer) {
         // If starting a new segment (after travel move), add the starting point
@@ -911,6 +916,32 @@ class PrinterSimulator {
         // Add the end point to continue the segment
         this.currentSegment.push(to.clone());
         this.totalPointCount++;
+
+        // Skip mesh updates during quick print - we'll do it once at the end
+        if (this.isQuickPrinting) {
+            return;
+        }
+
+        this.updateCounter++;
+
+        // Since updateLineMesh() only renders the current segment (one tube),
+        // the cost per update is constant regardless of print complexity.
+        // Throttle based purely on speed to avoid unnecessary recreation.
+        let updateInterval;
+        if (this.speed <= 1) {
+            updateInterval = 0; // Immediate - smooth appearance at slow speeds
+        } else if (this.speed < 10) {
+            updateInterval = 3;
+        } else if (this.speed < 50) {
+            updateInterval = 10;
+        } else {
+            updateInterval = 20;
+        }
+
+        if (updateInterval === 0 || this.updateCounter >= updateInterval) {
+            this.updateLineMesh();
+            this.updateCounter = 0;
+        }
     }
 
     /**
@@ -930,9 +961,9 @@ class PrinterSimulator {
         // Take the oldest segments
         const oldSegments = this.pathSegments.splice(0, segmentsToFreeze);
 
-        // Decrement total point count for spliced segments
-        for (const seg of oldSegments) {
-            this.totalPointCount -= seg.length;
+        // Decrement totalPointCount for the removed segments
+        for (let i = 0; i < oldSegments.length; i++) {
+            this.totalPointCount -= oldSegments[i].length;
         }
 
         // OPTIMIZATION: Always use lowest tessellation for frozen geometry
@@ -1001,37 +1032,10 @@ class PrinterSimulator {
     }
 
     /**
-     * Merge multiple frozen meshes into fewer meshes
-     * OPTIMIZATION: Reduce draw calls by consolidating frozen geometry
-     */
-    mergeFrozenMeshes() {
-        if (this.frozenMeshes.length <= 5) return;
-
-        // Merge all frozen meshes into one
-        const superMesh = BABYLON.Mesh.MergeMeshes(
-            this.frozenMeshes,
-            true,  // disposeSource
-            true,  // allow32BitsIndices
-            undefined,
-            false,
-            true
-        );
-
-        if (superMesh) {
-            superMesh.renderingGroupId = 1;
-            superMesh.isPickable = false;
-            superMesh.freezeWorldMatrix();
-
-            // Replace all frozen meshes with the single merged one
-            this.frozenMeshes = [superMesh];
-        }
-    }
-
-    /**
-     * Freeze a completed segment as static geometry.
-     * Creates one tube, freezes its world matrix, pushes to frozenMeshes[].
-     * Caller is responsible for copying segment data and clearing currentSegment.
-     * @param {BABYLON.Vector3[]} segment — path points for the tube
+     * Freeze a single completed segment immediately into a static tube mesh.
+     * Called when a travel move breaks the current segment.
+     * This is the key performance optimization: completed segments are frozen once
+     * and never rebuilt, so updateLineMesh() only ever renders the current segment.
      */
     freezeSegment(segment) {
         if (!segment || segment.length < 2) return;
@@ -1040,21 +1044,24 @@ class PrinterSimulator {
         const colorToUse = this.lockedPrintColor || this.filamentColor;
         const emissiveStrength = 1 - this.lightingSettings.detailLevel;
 
-        let material;
+        // Create or reuse the shared frozen material (non-rainbow mode)
         if (this.rainbowMode) {
+            // Rainbow: each segment gets its own color based on progress
             const currentLayer = Math.floor(this.currentCommandIndex / 100);
             const layerColor = this.getLayerColor(currentLayer);
-            material = new BABYLON.StandardMaterial(`frozenRainbow_${this.frozenMeshes.length}`, this.scene);
-            material.diffuseColor = layerColor;
-            material.emissiveColor = new BABYLON.Color3(
+            const mat = new BABYLON.StandardMaterial(`frozenRainbow_${this.frozenMeshes.length}`, this.scene);
+            mat.diffuseColor = layerColor;
+            mat.emissiveColor = new BABYLON.Color3(
                 layerColor.r * emissiveStrength,
                 layerColor.g * emissiveStrength,
                 layerColor.b * emissiveStrength
             );
-            material.specularColor = new BABYLON.Color3(0, 0, 0);
-            material.backFaceCulling = false;
-            material.freeze();
+            mat.specularColor = new BABYLON.Color3(0, 0, 0);
+            mat.backFaceCulling = false;
+            mat.freeze();
+            this._currentFreezeMaterial = mat;
         } else {
+            // Non-rainbow: share one material across all frozen segments
             if (!this.frozenMaterial) {
                 this.frozenMaterial = new BABYLON.StandardMaterial("frozenPrintMat", this.scene);
                 this.frozenMaterial.diffuseColor = colorToUse.clone();
@@ -1067,36 +1074,171 @@ class PrinterSimulator {
                 this.frozenMaterial.backFaceCulling = false;
                 this.frozenMaterial.freeze();
             }
-            material = this.frozenMaterial;
+            this._currentFreezeMaterial = this.frozenMaterial;
         }
 
         try {
             const tube = BABYLON.MeshBuilder.CreateTube(`frozenSeg_${this.frozenMeshes.length}`, {
                 path: segment,
                 radius: radius,
-                tessellation: 3,
+                tessellation: 3, // Triangle cross-section — fast and good enough for frozen geometry
                 cap: BABYLON.Mesh.NO_CAP,
                 updatable: false
             }, this.scene);
-            tube.material = material;
+            tube.material = this._currentFreezeMaterial;
             tube.renderingGroupId = 1;
             tube.isPickable = false;
             tube.freezeWorldMatrix();
+
             this.frozenMeshes.push(tube);
+
+            // Merge frozen meshes periodically to reduce draw calls
             if (this.frozenMeshes.length > 15) {
                 this.mergeFrozenMeshes();
             }
         } catch (e) {
-            // Skip invalid segments
+            // Skip invalid segments (e.g., duplicate points)
         }
     }
 
     /**
-     * Update the active segment mesh (current in-progress segment only).
-     * Skips rebuild when segment length unchanged. O(1) cost.
+     * Merge multiple frozen meshes into fewer meshes
+     * OPTIMIZATION: Reduce draw calls by consolidating frozen geometry
+     */
+    mergeFrozenMeshes() {
+        if (this.frozenMeshes.length <= 5) return;
+
+        // Merge all frozen meshes into one
+        const superMesh = BABYLON.Mesh.MergeMeshes(
+            this.frozenMeshes,
+            true,  // disposeSource (meshes only, materials survive if still referenced)
+            true,  // allow32BitsIndices
+            undefined,
+            false,
+            false  // Not multiMultiMaterial — apply single material after merge
+        );
+
+        if (superMesh) {
+            // Apply the shared frozen material (or the first available material)
+            superMesh.material = this.frozenMaterial || superMesh.material;
+            superMesh.renderingGroupId = 1;
+            superMesh.isPickable = false;
+            superMesh.freezeWorldMatrix();
+
+            // Replace all frozen meshes with the single merged one
+            this.frozenMeshes = [superMesh];
+        }
+    }
+
+    /**
+     * Build all geometry from allPathSegments synchronously.
+     * Used by quickPrint and save/restore to avoid per-segment freezeSegment overhead.
+     * Pauses the render loop so no intermediate frames are shown — the complete model
+     * appears all at once when done.
+     */
+    _bulkBuildGeometry(onComplete) {
+        const segments = this.allPathSegments;
+        if (!segments || segments.length === 0) {
+            if (onComplete) onComplete();
+            return;
+        }
+
+        // Pause rendering so the model doesn't visibly build up layer by layer
+        this.engine.stopRenderLoop();
+
+        const radius = this.lineThickness / 2;
+        const colorToUse = this.lockedPrintColor || this.filamentColor;
+        const emissiveStrength = 1 - this.lightingSettings.detailLevel;
+
+        // Create shared material for all bulk geometry
+        if (!this.frozenMaterial) {
+            this.frozenMaterial = new BABYLON.StandardMaterial("frozenPrintMat", this.scene);
+            this.frozenMaterial.diffuseColor = colorToUse.clone();
+            this.frozenMaterial.emissiveColor = new BABYLON.Color3(
+                colorToUse.r * emissiveStrength,
+                colorToUse.g * emissiveStrength,
+                colorToUse.b * emissiveStrength
+            );
+            this.frozenMaterial.specularColor = new BABYLON.Color3(0, 0, 0);
+            this.frozenMaterial.backFaceCulling = false;
+            this.frozenMaterial.freeze();
+        }
+
+        const tubeMeshes = [];
+
+        for (let i = 0; i < segments.length; i++) {
+            const segment = segments[i];
+            if (!segment || segment.length < 2) continue;
+
+            try {
+                let mat = this.frozenMaterial;
+
+                // Rainbow mode: per-segment color
+                if (this.rainbowMode) {
+                    const layer = Math.floor(i * 100 / segments.length);
+                    const layerColor = this.getLayerColor(layer);
+                    mat = new BABYLON.StandardMaterial(`bulkRainbow_${i}`, this.scene);
+                    mat.diffuseColor = layerColor;
+                    mat.emissiveColor = new BABYLON.Color3(
+                        layerColor.r * emissiveStrength,
+                        layerColor.g * emissiveStrength,
+                        layerColor.b * emissiveStrength
+                    );
+                    mat.specularColor = new BABYLON.Color3(0, 0, 0);
+                    mat.backFaceCulling = false;
+                    mat.freeze();
+                }
+
+                const tube = BABYLON.MeshBuilder.CreateTube(`bulk_${i}`, {
+                    path: segment,
+                    radius: radius,
+                    tessellation: 3,
+                    cap: BABYLON.Mesh.NO_CAP,
+                    updatable: false
+                }, this.scene);
+                tube.material = mat;
+                tube.renderingGroupId = 1;
+                tube.isPickable = false;
+                tube.freezeWorldMatrix();
+                tubeMeshes.push(tube);
+            } catch (e) {
+                // Skip invalid segments
+            }
+        }
+
+        // Merge all tubes into a single mesh
+        if (tubeMeshes.length > 0) {
+            const merged = BABYLON.Mesh.MergeMeshes(
+                tubeMeshes,
+                true,   // disposeSource
+                true,   // allow32BitsIndices
+                undefined,
+                false,
+                false
+            );
+            if (merged) {
+                merged.material = this.frozenMaterial || merged.material;
+                merged.renderingGroupId = 1;
+                merged.isPickable = false;
+                merged.freezeWorldMatrix();
+                this.frozenMeshes.push(merged);
+            }
+        }
+
+        // Resume rendering — model appears all at once
+        this.startRenderLoop();
+
+        if (onComplete) onComplete();
+    }
+
+    /**
+     * Update the active tube mesh for the current in-progress segment only
+     * OPTIMIZED: Only renders ONE segment (currentSegment) as a single tube.
+     * Completed segments are frozen immediately via freezeSegment(), so this
+     * method never has to rebuild accumulated geometry.
      */
     updateLineMesh() {
-        // If segment is empty/too short, dispose stale mesh and bail
+        // Only render the current in-progress segment
         if (this.currentSegment.length < 2) {
             if (this.lineMesh) {
                 this.lineMesh.dispose();
@@ -1105,14 +1247,14 @@ class PrinterSimulator {
             return;
         }
 
-        // Skip rebuild if segment hasn't grown since last call
+        // Skip if nothing changed (same point count = no new points added)
         const segLen = this.currentSegment.length;
         if (this.lineMesh && segLen === this.lastSegmentCount) {
             return;
         }
         this.lastSegmentCount = segLen;
 
-        // Dispose old active mesh
+        // Dispose old active tube (we recreate one small tube — very fast)
         if (this.lineMesh) {
             this.lineMesh.dispose();
             this.lineMesh = null;
@@ -1122,16 +1264,16 @@ class PrinterSimulator {
         const colorToUse = this.lockedPrintColor || this.filamentColor;
         const emissiveStrength = 1 - this.lightingSettings.detailLevel;
 
-        // Create or reuse the active material
+        // Create or reuse the active material (one allocation for entire print)
         if (!this.activeMaterial) {
             this.activeMaterial = new BABYLON.StandardMaterial("activePrintMat", this.scene);
             this.activeMaterial.specularColor = new BABYLON.Color3(0, 0, 0);
             this.activeMaterial.backFaceCulling = false;
         }
 
-        // Update color on cached material
+        // Update color on the cached material
         if (this.rainbowMode) {
-            const currentLayer = Math.floor(this.totalPointCount / 100);
+            const currentLayer = Math.floor(this.currentCommandIndex / 100);
             const layerColor = this.getLayerColor(currentLayer);
             this.activeMaterial.diffuseColor = layerColor;
             this.activeMaterial.emissiveColor = new BABYLON.Color3(
@@ -1148,7 +1290,7 @@ class PrinterSimulator {
             );
         }
 
-        // Create a single tube for the current segment only
+        // Create a single tube for just the current segment
         try {
             this.lineMesh = BABYLON.MeshBuilder.CreateTube("activePrint", {
                 path: this.currentSegment,
@@ -1161,6 +1303,7 @@ class PrinterSimulator {
             this.lineMesh.renderingGroupId = 1;
             this.lineMesh.isPickable = false;
         } catch (e) {
+            // Invalid path (e.g., duplicate points) — skip
             this.lineMesh = null;
         }
     }
@@ -1170,7 +1313,7 @@ class PrinterSimulator {
      * This re-renders all geometry with higher tessellation and capped ends
      * to match the preview quality and give a more realistic printed look
      */
-    finalQualityRender(lightweight) {
+    finalQualityRender() {
         // Use allPathSegments which contains ALL segments (not cleared during freezing)
         const allSegments = [...this.allPathSegments];
         // Also add current segment if it has points
@@ -1180,23 +1323,33 @@ class PrinterSimulator {
 
         if (allSegments.length === 0) return;
 
-        // Dispose existing geometry
+        // Dispose existing active tube
         if (this.lineMesh) {
-            if (this.lineMesh.material && this.lineMesh.material !== this.printMaterial) {
-                this.lineMesh.material.dispose();
-            }
             this.lineMesh.dispose();
             this.lineMesh = null;
         }
 
-        // Dispose frozen meshes
+        // Dispose frozen meshes (meshes only — handle materials carefully)
         this.frozenMeshes.forEach(mesh => {
             if (mesh) {
-                if (mesh.material) mesh.material.dispose();
+                // Only dispose rainbow-specific materials, not the shared frozenMaterial
+                if (mesh.material && mesh.material !== this.frozenMaterial && mesh.material !== this.activeMaterial) {
+                    mesh.material.dispose();
+                }
                 mesh.dispose();
             }
         });
         this.frozenMeshes = [];
+
+        // Dispose the shared frozen material and active material
+        if (this.frozenMaterial) {
+            this.frozenMaterial.dispose();
+            this.frozenMaterial = null;
+        }
+        if (this.activeMaterial) {
+            this.activeMaterial.dispose();
+            this.activeMaterial = null;
+        }
 
         // Use locked color or current filament color
         const colorToUse = this.lockedPrintColor || this.filamentColor;
@@ -1205,7 +1358,7 @@ class PrinterSimulator {
         // Calculate emissive from lighting settings
         const emissiveStrength = 1 - this.lightingSettings.detailLevel;
 
-        // Create material
+        // Create high-quality material
         const finalMaterial = new BABYLON.StandardMaterial("finalPrintMaterial", this.scene);
         finalMaterial.diffuseColor = colorToUse.clone();
         finalMaterial.emissiveColor = new BABYLON.Color3(
@@ -1216,12 +1369,7 @@ class PrinterSimulator {
         finalMaterial.specularColor = new BABYLON.Color3(0, 0, 0);
         finalMaterial.backFaceCulling = false;
 
-        // Lightweight mode: tessellation 4, no caps (restore)
-        // Full mode: tessellation 6, capped ends (after live print)
-        const tessellation = lightweight ? 4 : 6;
-        const cap = lightweight ? BABYLON.Mesh.NO_CAP : BABYLON.Mesh.CAP_ALL;
-
-        // Create tubes
+        // Create high-quality tubes with capped ends
         const tubeMeshes = [];
         for (let i = 0; i < allSegments.length; i++) {
             const segment = allSegments[i];
@@ -1231,8 +1379,8 @@ class PrinterSimulator {
                 const tube = BABYLON.MeshBuilder.CreateTube(`final_segment_${i}`, {
                     path: segment,
                     radius: radius,
-                    tessellation: tessellation,
-                    cap: cap,
+                    tessellation: 6,  // Higher quality (hexagonal cross-section)
+                    cap: BABYLON.Mesh.CAP_ALL,  // Capped ends for solid look
                     updatable: false
                 }, this.scene);
                 tube.material = finalMaterial;
@@ -1403,16 +1551,19 @@ class PrinterSimulator {
 
     /**
      * Start render loop
-     * Per-frame cost is now constant (O(1)) so no throttling needed
+     * OPTIMIZED: Adaptive frame rate based on complexity
      */
     startRenderLoop() {
-        this.engine.runRenderLoop(() => this.scene.render());
+        // Active geometry is always just one small tube (currentSegment),
+        // frozen geometry is GPU-cached and cheap to render.
+        // No adaptive throttling needed — always render at full speed.
+        this.engine.runRenderLoop(() => {
+            this.scene.render();
+        });
 
-        // Only bind resize once to avoid listener leaks
-        if (!this._resizeHandler) {
-            this._resizeHandler = () => this.engine.resize();
-            window.addEventListener('resize', this._resizeHandler);
-        }
+        window.addEventListener('resize', () => {
+            this.engine.resize();
+        });
     }
 
     /**
@@ -1465,7 +1616,7 @@ class PrinterSimulator {
     /**
      * Quick print - render final result in batches
      */
-    quickPrint(onComplete, skipFinalRender) {
+    quickPrint(onComplete) {
         if (!this.commands || this.commands.length === 0) return;
 
         // Process all commands without animation
@@ -1475,12 +1626,13 @@ class PrinterSimulator {
         // Disable mesh updates during quick print
         const originalUpdateCounter = this.updateCounter;
         this.isQuickPrinting = true;
-        this._skipFinalRender = skipFinalRender || false;
         this.useInterpolation = false; // Disable interpolation for quick print
         this.lastSegmentCount = 0; // Reset so final update will work
 
         // Process commands in batches to avoid freezing
-        const batchSize = 10000; // Process 10000 commands per frame (no geometry overhead during quickPrint)
+        // During quickPrint, executeCommand only collects point data (no geometry creation),
+        // so we can process many more commands per frame
+        const batchSize = 10000;
         const totalCommands = this.commands.length;
         let processedCount = 0;
 
@@ -1513,20 +1665,21 @@ class PrinterSimulator {
                 // Re-enable mesh updates
                 this.isQuickPrinting = false;
 
-                // Capture final segment
+                // Save final segment
                 if (this.currentSegment.length > 1) {
-                    this.allPathSegments.push([...this.currentSegment]);
+                    const segmentCopy = [...this.currentSegment];
+                    this.allPathSegments.push(segmentCopy);
                     this.currentSegment = [];
                 }
 
-                // Build all geometry at once (pauses render loop for clean result)
+                // Build all geometry in bulk from collected segments
                 this._bulkBuildGeometry(() => {
                     // Hide print head since print is complete
                     if (this.printHead) {
                         this.printHead.setEnabled(false);
                     }
 
-                    // Enable click-to-remove interaction
+                    // Enable click-to-remove interaction on the finished print
                     this.enablePrintInteraction();
 
                     // Update progress to 100%
@@ -1559,112 +1712,6 @@ class PrinterSimulator {
 
         // Start processing
         processBatch();
-    }
-
-    /**
-     * Build all tube geometry from allPathSegments in one synchronous pass.
-     * Pauses the render loop so no intermediate frames are drawn — the complete
-     * model appears all at once when the render loop resumes.
-     */
-    _bulkBuildGeometry(onComplete) {
-        const allSegments = this.allPathSegments;
-        if (allSegments.length === 0) {
-            if (onComplete) onComplete();
-            return;
-        }
-
-        // Pause render loop so geometry doesn't visually build up
-        this.engine.stopRenderLoop();
-
-        const radius = this.lineThickness / 2;
-        const colorToUse = this.lockedPrintColor || this.filamentColor;
-        const emissiveStrength = 1 - this.lightingSettings.detailLevel;
-
-        // Dispose any existing print geometry
-        if (this.lineMesh) {
-            this.lineMesh.dispose();
-            this.lineMesh = null;
-        }
-        this.frozenMeshes.forEach(m => { if (m) m.dispose(); });
-        this.frozenMeshes = [];
-
-        // Create all tubes synchronously
-        const tubeMeshes = [];
-        for (let i = 0; i < allSegments.length; i++) {
-            const segment = allSegments[i];
-            if (segment.length < 2) continue;
-
-            let material;
-            if (this.rainbowMode) {
-                const layerColor = this.getLayerColor(Math.floor(i * 3));
-                material = new BABYLON.StandardMaterial(`bulk_rainbow_${i}`, this.scene);
-                material.diffuseColor = layerColor;
-                material.emissiveColor = new BABYLON.Color3(
-                    layerColor.r * emissiveStrength,
-                    layerColor.g * emissiveStrength,
-                    layerColor.b * emissiveStrength
-                );
-                material.specularColor = new BABYLON.Color3(0, 0, 0);
-                material.backFaceCulling = false;
-            } else {
-                if (!this.frozenMaterial) {
-                    this.frozenMaterial = new BABYLON.StandardMaterial("bulkFrozenMaterial", this.scene);
-                    this.frozenMaterial.diffuseColor = colorToUse.clone();
-                    this.frozenMaterial.emissiveColor = new BABYLON.Color3(
-                        colorToUse.r * emissiveStrength,
-                        colorToUse.g * emissiveStrength,
-                        colorToUse.b * emissiveStrength
-                    );
-                    this.frozenMaterial.specularColor = new BABYLON.Color3(0, 0, 0);
-                    this.frozenMaterial.backFaceCulling = false;
-                }
-                material = this.frozenMaterial;
-            }
-
-            try {
-                const tube = BABYLON.MeshBuilder.CreateTube(`bulk_seg_${i}`, {
-                    path: segment,
-                    radius: radius,
-                    tessellation: 3,
-                    cap: BABYLON.Mesh.NO_CAP,
-                    updatable: false
-                }, this.scene);
-                tube.material = material;
-                tubeMeshes.push(tube);
-            } catch (e) {
-                // Skip invalid segments
-            }
-        }
-
-        // Single merge operation
-        if (tubeMeshes.length > 0) {
-            if (tubeMeshes.length === 1) {
-                tubeMeshes[0].renderingGroupId = 1;
-                tubeMeshes[0].isPickable = false;
-                tubeMeshes[0].freezeWorldMatrix();
-                this.frozenMeshes = [tubeMeshes[0]];
-            } else {
-                const merged = BABYLON.Mesh.MergeMeshes(
-                    tubeMeshes,
-                    true,
-                    true,
-                    undefined,
-                    false,
-                    true
-                );
-                if (merged) {
-                    merged.renderingGroupId = 1;
-                    merged.isPickable = false;
-                    merged.freezeWorldMatrix();
-                    this.frozenMeshes = [merged];
-                }
-            }
-        }
-
-        // Resume render loop — complete model appears instantly
-        this.startRenderLoop();
-
-        if (onComplete) onComplete();
     }
 
     /**
@@ -2043,8 +2090,18 @@ class PrinterSimulator {
      * @param {number} emissiveStrength - 0-1, how much emissive color to apply
      */
     updateMaterialEmissive(emissiveStrength) {
-        // Update frozen material
-        if (this.frozenMaterial) {
+        // Update active tube material
+        if (this.activeMaterial && this.activeMaterial.diffuseColor) {
+            const baseColor = this.activeMaterial.diffuseColor;
+            this.activeMaterial.emissiveColor = new BABYLON.Color3(
+                baseColor.r * emissiveStrength,
+                baseColor.g * emissiveStrength,
+                baseColor.b * emissiveStrength
+            );
+        }
+
+        // Update shared frozen material
+        if (this.frozenMaterial && this.frozenMaterial.diffuseColor) {
             this.frozenMaterial.unfreeze();
             const baseColor = this.frozenMaterial.diffuseColor;
             this.frozenMaterial.emissiveColor = new BABYLON.Color3(
@@ -2055,20 +2112,10 @@ class PrinterSimulator {
             this.frozenMaterial.freeze();
         }
 
-        // Update active material
-        if (this.activeMaterial) {
-            const baseColor = this.activeMaterial.diffuseColor;
-            this.activeMaterial.emissiveColor = new BABYLON.Color3(
-                baseColor.r * emissiveStrength,
-                baseColor.g * emissiveStrength,
-                baseColor.b * emissiveStrength
-            );
-        }
-
-        // Update frozen meshes
-        if (this.frozenMeshes) {
+        // Update any rainbow-specific materials on frozen meshes
+        if (this.frozenMeshes && this.rainbowMode) {
             for (const mesh of this.frozenMeshes) {
-                if (mesh.material && mesh.material.diffuseColor) {
+                if (mesh.material && mesh.material !== this.frozenMaterial && mesh.material.diffuseColor) {
                     const baseColor = mesh.material.diffuseColor;
                     mesh.material.emissiveColor = new BABYLON.Color3(
                         baseColor.r * emissiveStrength,
@@ -2077,6 +2124,16 @@ class PrinterSimulator {
                     );
                 }
             }
+        }
+
+        // Update print material (legacy, used by finalQualityRender)
+        if (this.printMaterial && this.printMaterial.diffuseColor) {
+            const baseColor = this.printMaterial.diffuseColor;
+            this.printMaterial.emissiveColor = new BABYLON.Color3(
+                baseColor.r * emissiveStrength,
+                baseColor.g * emissiveStrength,
+                baseColor.b * emissiveStrength
+            );
         }
 
         // Update loaded model preview meshes (if any are using StandardMaterial)
@@ -2094,78 +2151,248 @@ class PrinterSimulator {
         }
     }
 
-    // ========================================================================
-    // Print Interaction — click-to-remove finished prints
-    // ========================================================================
-
     /**
-     * Enable click interaction on the finished print.
-     * Makes frozen meshes pickable, shows hover highlight, and click popup.
+     * Enable click interaction on finished print for removal
      */
     enablePrintInteraction() {
-        if (!this.scene) return;
+        this.printInteractionEnabled = true;
 
-        // Make frozen meshes pickable
-        for (const mesh of this.frozenMeshes) {
-            if (mesh) mesh.isPickable = true;
-        }
-
-        // Add pointer observable for hover and click
-        this.printObserver = this.scene.onPointerObservable.add((pointerInfo) => {
-            switch (pointerInfo.type) {
-                case BABYLON.PointerEventTypes.POINTERMOVE: {
-                    const pickResult = this.scene.pick(
-                        this.scene.pointerX,
-                        this.scene.pointerY,
-                        (mesh) => this._isPrintMesh(mesh)
-                    );
-                    if (pickResult.hit) {
-                        this.canvas.style.cursor = 'pointer';
-                        this._applyPrintHighlight();
-                    } else {
-                        this.canvas.style.cursor = 'default';
-                        this._clearPrintHighlight();
-                    }
-                    break;
-                }
-                case BABYLON.PointerEventTypes.POINTERDOWN: {
-                    const pickResult = this.scene.pick(
-                        this.scene.pointerX,
-                        this.scene.pointerY,
-                        (mesh) => this._isPrintMesh(mesh)
-                    );
-                    if (pickResult.hit) {
-                        const evt = pointerInfo.event;
-                        this._showRemovePopup(evt.clientX, evt.clientY);
-                    }
-                    break;
-                }
+        // Make all frozen meshes pickable
+        this.frozenMeshes.forEach(mesh => {
+            if (mesh && !mesh.isDisposed()) {
+                mesh.isPickable = true;
             }
         });
+
+        // Also make merged meshes pickable
+        this.mergedMeshes.forEach(mesh => {
+            if (mesh && !mesh.isDisposed()) {
+                mesh.isPickable = true;
+            }
+        });
+
+        // Add pointer observable for hover + click
+        if (!this._printPointerObserver) {
+            this._printPointerObserver = this.scene.onPointerObservable.add((pointerInfo) => {
+                if (!this.printInteractionEnabled) return;
+
+                switch (pointerInfo.type) {
+                    case BABYLON.PointerEventTypes.POINTERMOVE: {
+                        const pickResult = this.scene.pick(this.scene.pointerX, this.scene.pointerY, (mesh) => {
+                            return this._isPrintMesh(mesh);
+                        });
+                        if (pickResult.hit) {
+                            this.canvas.style.cursor = 'pointer';
+                            // Highlight effect - slight emissive boost
+                            if (this._hoveredPrintMesh !== pickResult.pickedMesh) {
+                                this._clearPrintHighlight();
+                                this._hoveredPrintMesh = pickResult.pickedMesh;
+                                this._applyPrintHighlight(pickResult.pickedMesh);
+                            }
+                        } else {
+                            this.canvas.style.cursor = '';
+                            this._clearPrintHighlight();
+                            this._hoveredPrintMesh = null;
+                        }
+                        break;
+                    }
+                    case BABYLON.PointerEventTypes.POINTERTAP: {
+                        const pickResult = this.scene.pick(this.scene.pointerX, this.scene.pointerY, (mesh) => {
+                            return this._isPrintMesh(mesh);
+                        });
+                        if (pickResult.hit) {
+                            this._showRemovePopup(pointerInfo.event.clientX, pointerInfo.event.clientY);
+                        }
+                        break;
+                    }
+                }
+            });
+        }
     }
 
     /**
-     * Remove the finished print from the bed.
-     * Disposes all frozen/merged/active geometry, resets printer to home.
+     * Check if a mesh belongs to the printed model
+     */
+    _isPrintMesh(mesh) {
+        if (!mesh || mesh.isDisposed()) return false;
+        return this.frozenMeshes.includes(mesh) || this.mergedMeshes.includes(mesh);
+    }
+
+    /**
+     * Apply hover highlight to a print mesh
+     */
+    _applyPrintHighlight(mesh) {
+        if (!mesh || !mesh.material) return;
+        this._savedEmissive = mesh.material.emissiveColor ? mesh.material.emissiveColor.clone() : null;
+        // Brighten slightly on hover
+        mesh.material.emissiveColor = new BABYLON.Color3(0.4, 0.4, 0.4);
+    }
+
+    /**
+     * Clear hover highlight from print mesh
+     */
+    _clearPrintHighlight() {
+        if (this._hoveredPrintMesh && !this._hoveredPrintMesh.isDisposed() && this._hoveredPrintMesh.material) {
+            if (this._savedEmissive) {
+                this._hoveredPrintMesh.material.emissiveColor = this._savedEmissive;
+            }
+            this._savedEmissive = null;
+        }
+    }
+
+    /**
+     * Show popup near click point with remove option
+     */
+    _showRemovePopup(clientX, clientY) {
+        this._hideRemovePopup();
+
+        const popup = document.createElement('div');
+        popup.id = 'print-remove-popup';
+        popup.style.cssText = `
+            position: fixed;
+            left: ${clientX + 10}px;
+            top: ${clientY - 20}px;
+            background: linear-gradient(135deg, #2a2a3e, #1e1e2e);
+            border: 1px solid rgba(139, 92, 246, 0.5);
+            border-radius: 8px;
+            padding: 8px 4px;
+            z-index: 10000;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            animation: popupFadeIn 0.15s ease-out;
+        `;
+
+        // Add animation keyframes if not already added
+        if (!document.getElementById('print-popup-styles')) {
+            const style = document.createElement('style');
+            style.id = 'print-popup-styles';
+            style.textContent = `
+                @keyframes popupFadeIn {
+                    from { opacity: 0; transform: scale(0.9); }
+                    to { opacity: 1; transform: scale(1); }
+                }
+            `;
+            document.head.appendChild(style);
+        }
+
+        const removeBtn = document.createElement('button');
+        removeBtn.textContent = 'Remove from Bed';
+        removeBtn.style.cssText = `
+            display: block;
+            width: 100%;
+            padding: 8px 16px;
+            background: rgba(239, 68, 68, 0.2);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-family: inherit;
+            transition: all 0.15s;
+        `;
+        removeBtn.onmouseenter = () => {
+            removeBtn.style.background = 'rgba(239, 68, 68, 0.4)';
+            removeBtn.style.color = '#fca5a5';
+        };
+        removeBtn.onmouseleave = () => {
+            removeBtn.style.background = 'rgba(239, 68, 68, 0.2)';
+            removeBtn.style.color = '#f87171';
+        };
+        removeBtn.onclick = (e) => {
+            e.stopPropagation();
+            this._hideRemovePopup();
+            this.removePrint();
+        };
+
+        popup.appendChild(removeBtn);
+        document.body.appendChild(popup);
+
+        // Ensure popup stays within viewport
+        requestAnimationFrame(() => {
+            const rect = popup.getBoundingClientRect();
+            if (rect.right > window.innerWidth) {
+                popup.style.left = (clientX - rect.width - 10) + 'px';
+            }
+            if (rect.bottom > window.innerHeight) {
+                popup.style.top = (clientY - rect.height - 10) + 'px';
+            }
+        });
+
+        // Close popup when clicking elsewhere
+        this._popupClickHandler = (e) => {
+            if (!popup.contains(e.target)) {
+                this._hideRemovePopup();
+            }
+        };
+        setTimeout(() => {
+            document.addEventListener('click', this._popupClickHandler);
+        }, 0);
+    }
+
+    /**
+     * Hide the remove popup
+     */
+    _hideRemovePopup() {
+        const existing = document.getElementById('print-remove-popup');
+        if (existing) {
+            existing.remove();
+        }
+        if (this._popupClickHandler) {
+            document.removeEventListener('click', this._popupClickHandler);
+            this._popupClickHandler = null;
+        }
+    }
+
+    /**
+     * Remove the printed model from the bed
      */
     removePrint() {
         this.disablePrintInteraction();
 
-        // Dispose all frozen/merged geometry
-        for (const mesh of this.frozenMeshes) {
-            if (mesh) {
+        // Dispose all frozen meshes
+        this.frozenMeshes.forEach(mesh => {
+            if (mesh && !mesh.isDisposed()) {
                 if (mesh.material && mesh.material !== this.frozenMaterial) {
                     mesh.material.dispose();
                 }
                 mesh.dispose();
             }
-        }
+        });
         this.frozenMeshes = [];
 
-        // Dispose active segment mesh
+        // Dispose shared frozen material
+        if (this.frozenMaterial) {
+            this.frozenMaterial.dispose();
+            this.frozenMaterial = null;
+        }
+
+        // Dispose merged meshes
+        this.mergedMeshes.forEach(mesh => {
+            if (mesh && !mesh.isDisposed()) {
+                if (mesh.material) {
+                    mesh.material.dispose();
+                }
+                mesh.dispose();
+            }
+        });
+        this.mergedMeshes = [];
+
+        // Dispose any remaining printed geometry
+        this.printedGeometry.forEach(mesh => {
+            if (mesh && !mesh.isDisposed()) {
+                if (mesh.material) mesh.material.dispose();
+                mesh.dispose();
+            }
+        });
+        this.printedGeometry = [];
+
+        // Dispose active tube
         if (this.lineMesh) {
             this.lineMesh.dispose();
             this.lineMesh = null;
+        }
+        if (this.activeMaterial) {
+            this.activeMaterial.dispose();
+            this.activeMaterial = null;
         }
 
         // Clear segment data
@@ -2173,20 +2400,7 @@ class PrinterSimulator {
         this.allPathSegments = [];
         this.currentSegment = [];
         this.totalPointCount = 0;
-
-        // Dispose materials
-        if (this.frozenMaterial) {
-            this.frozenMaterial.dispose();
-            this.frozenMaterial = null;
-        }
-        if (this.activeMaterial) {
-            this.activeMaterial.dispose();
-            this.activeMaterial = null;
-        }
-        if (this.printMaterial) {
-            this.printMaterial.dispose();
-            this.printMaterial = null;
-        }
+        this.lockedPrintColor = null;
 
         // Re-show print head at home position
         if (this.printHead) {
@@ -2198,144 +2412,37 @@ class PrinterSimulator {
             this.xGantry.position.z = 0;
         }
 
-        // Fire callback
+        // Notify via callback if available
         if (this.onPrintRemoved) {
             this.onPrintRemoved();
         }
     }
 
     /**
-     * Clean up print interaction observers, cursor, highlights, popup.
+     * Disable print interaction (cleanup)
      */
     disablePrintInteraction() {
-        // Remove observer
-        if (this.printObserver && this.scene) {
-            this.scene.onPointerObservable.remove(this.printObserver);
-            this.printObserver = null;
-        }
-
-        // Reset cursor
-        if (this.canvas) {
-            this.canvas.style.cursor = 'default';
-        }
-
-        // Clear highlight
+        this.printInteractionEnabled = false;
+        this.canvas.style.cursor = '';
         this._clearPrintHighlight();
+        this._hoveredPrintMesh = null;
+        this._hideRemovePopup();
 
-        // Remove popup
-        if (this.removePopup) {
-            this.removePopup.remove();
-            this.removePopup = null;
-        }
-    }
-
-    /**
-     * Show a "Remove from Bed" popup near the click point.
-     */
-    _showRemovePopup(x, y) {
-        // Remove existing popup
-        if (this.removePopup) {
-            this.removePopup.remove();
+        if (this._printPointerObserver) {
+            this.scene.onPointerObservable.remove(this._printPointerObserver);
+            this._printPointerObserver = null;
         }
 
-        const popup = document.createElement('div');
-        popup.style.cssText = `
-            position: fixed;
-            background: #1a1a2e;
-            border: 1px solid #bb86fc;
-            border-radius: 8px;
-            padding: 12px 16px;
-            z-index: 1000;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-            font-family: inherit;
-        `;
-
-        const btn = document.createElement('button');
-        btn.textContent = 'Remove from Bed';
-        btn.style.cssText = `
-            background: linear-gradient(135deg, #e94560, #c62a40);
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 13px;
-            font-weight: 500;
-            font-family: inherit;
-        `;
-        btn.addEventListener('click', () => {
-            this.removePrint();
-        });
-        btn.addEventListener('mouseenter', () => {
-            btn.style.background = 'linear-gradient(135deg, #ff5a7a, #e94560)';
-        });
-        btn.addEventListener('mouseleave', () => {
-            btn.style.background = 'linear-gradient(135deg, #e94560, #c62a40)';
-        });
-
-        popup.appendChild(btn);
-        document.body.appendChild(popup);
-
-        // Position within viewport
-        const rect = popup.getBoundingClientRect();
-        let left = x;
-        let top = y - rect.height - 10;
-        if (left + rect.width > window.innerWidth) left = window.innerWidth - rect.width - 10;
-        if (top < 0) top = y + 10;
-        popup.style.left = left + 'px';
-        popup.style.top = top + 'px';
-
-        this.removePopup = popup;
-
-        // Close on outside click
-        const closeHandler = (e) => {
-            if (!popup.contains(e.target)) {
-                popup.remove();
-                this.removePopup = null;
-                document.removeEventListener('pointerdown', closeHandler);
+        // Make meshes non-pickable again
+        this.frozenMeshes.forEach(mesh => {
+            if (mesh && !mesh.isDisposed()) {
+                mesh.isPickable = false;
             }
-        };
-        // Delay to avoid immediate close from the same click
-        setTimeout(() => {
-            document.addEventListener('pointerdown', closeHandler);
-        }, 100);
-    }
-
-    /**
-     * Check if a mesh belongs to the printed model.
-     */
-    _isPrintMesh(mesh) {
-        return this.frozenMeshes.includes(mesh) || mesh === this.lineMesh;
-    }
-
-    /**
-     * Apply hover highlight (emissive brightness boost) to print meshes.
-     */
-    _applyPrintHighlight() {
-        for (const mesh of this.frozenMeshes) {
-            if (mesh && mesh.material) {
-                if (!mesh._originalEmissive) {
-                    mesh._originalEmissive = mesh.material.emissiveColor.clone();
-                }
-                const base = mesh.material.diffuseColor;
-                mesh.material.emissiveColor = new BABYLON.Color3(
-                    Math.min(base.r * 0.7, 1),
-                    Math.min(base.g * 0.7, 1),
-                    Math.min(base.b * 0.7, 1)
-                );
+        });
+        this.mergedMeshes.forEach(mesh => {
+            if (mesh && !mesh.isDisposed()) {
+                mesh.isPickable = false;
             }
-        }
-    }
-
-    /**
-     * Clear hover highlight from print meshes.
-     */
-    _clearPrintHighlight() {
-        for (const mesh of this.frozenMeshes) {
-            if (mesh && mesh.material && mesh._originalEmissive) {
-                mesh.material.emissiveColor = mesh._originalEmissive.clone();
-                delete mesh._originalEmissive;
-            }
-        }
+        });
     }
 }
