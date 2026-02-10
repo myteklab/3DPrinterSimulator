@@ -65,9 +65,11 @@ class PrinterSimulator {
         // Performance optimization - freeze old geometry
         this.maxActiveSegments = 20; // REDUCED: Maximum segments to rebuild each frame (was 30)
         this.frozenMeshes = []; // Array of frozen geometry meshes
-        this.totalPointCount = 0; // Running counter to avoid expensive .reduce() calls
+        this.totalPointCount = 0; // Running counter for rainbow mode layer calculation
         this.frozenMaterial = null; // Shared material for all frozen segments (non-rainbow)
         this.activeMaterial = null; // Cached material for the active segment
+        this._pendingFreezeSegments = []; // Segments waiting to be batch-frozen into geometry
+        this._resizeHandler = null; // Stored so we don't leak listeners
 
         // Print interaction (click-to-remove after print completes)
         this.printObserver = null;
@@ -503,6 +505,7 @@ class PrinterSimulator {
         this.currentSegment = [];
         this.updateCounter = 0;
         this.totalPointCount = 0; // Reset running point counter
+        this._pendingFreezeSegments = []; // Clear pending freeze queue
         this.lockedPrintColor = null; // Unlock color when clearing
 
         // Dispose cached materials
@@ -574,11 +577,12 @@ class PrinterSimulator {
         if (!this.isPlaying || this.currentCommandIndex >= this.commands.length) {
             if (this.currentCommandIndex >= this.commands.length) {
                 this.isPlaying = false;
-                // Freeze final segment before finishing
+                // Freeze final segment and flush all pending geometry
                 if (this.currentSegment.length > 1) {
                     this.freezeSegment();
                 }
-                // Merge frozen meshes for final result (no expensive rebuild)
+                this._flushPendingFreezes();
+                // Merge frozen meshes for final result (fewer draw calls)
                 this.mergeFrozenMeshes();
                 this.enablePrintInteraction();
                 this.onComplete && this.onComplete();
@@ -648,7 +652,6 @@ class PrinterSimulator {
                                 this.currentSegment.push(this.lastInterpolatedPosition.clone());
                             }
                             this.currentSegment.push(to.clone());
-                            this.updateLineMesh();
                         }
                     }
 
@@ -724,6 +727,10 @@ class PrinterSimulator {
             });
         }
 
+        // Update geometry once per frame (not per command)
+        this.updateLineMesh();
+        this._flushPendingFreezes();
+
         // Continue animation
         requestAnimationFrame(() => this.animate());
     }
@@ -782,9 +789,6 @@ class PrinterSimulator {
                     // Add the current position
                     this.currentSegment.push(segmentTo);
                     this.totalPointCount++;
-
-                    // Update mesh immediately for smooth appearance at slow speeds
-                    this.updateLineMesh();
 
                     // Track this position for next frame
                     this.lastInterpolatedPosition = segmentTo;
@@ -891,8 +895,8 @@ class PrinterSimulator {
     }
 
     /**
-     * Add line segment (ULTRA FAST - single mesh approach)
-     * Only called when extruding
+     * Add line segment — just collects point data, no geometry creation.
+     * Geometry is created once per frame in animate() via updateLineMesh().
      */
     addLineSegment(from, to, layer) {
         // If starting a new segment (after travel move), add the starting point
@@ -903,61 +907,6 @@ class PrinterSimulator {
         // Add the end point to continue the segment
         this.currentSegment.push(to.clone());
         this.totalPointCount++;
-
-        // Skip mesh updates during quick print - we'll do it once at the end
-        if (this.isQuickPrinting) {
-            return;
-        }
-
-        this.updateCounter++;
-
-        // OPTIMIZED: Much more aggressive update intervals for complex models
-        // As more geometry builds up, update less frequently to maintain performance
-        const totalPoints = this.totalPointCount;
-
-        let updateInterval;
-        if (this.speed <= 1) {
-            // Very slow speed (1x or slower) - update immediately for realistic appearance
-            // This won't cause performance issues since we're executing fewer commands per frame
-            updateInterval = 0; // Force immediate update every segment
-        } else if (this.speed < 5) {
-            // Slow-medium speed (1x-5x)
-            if (totalPoints < 300) {
-                updateInterval = 3;
-            } else if (totalPoints < 800) {
-                updateInterval = 10;
-            } else {
-                updateInterval = 20; // Complex models - update less
-            }
-        } else if (this.speed < 20) {
-            // Medium-fast speed (5x-20x)
-            if (totalPoints < 300) {
-                updateInterval = 15;
-            } else if (totalPoints < 800) {
-                updateInterval = 40;
-            } else if (totalPoints < 2000) {
-                updateInterval = 80;
-            } else {
-                updateInterval = 150; // Very complex models - update very rarely
-            }
-        } else {
-            // Very fast speed (20x+)
-            if (totalPoints < 300) {
-                updateInterval = 30;
-            } else if (totalPoints < 800) {
-                updateInterval = 80;
-            } else if (totalPoints < 2000) {
-                updateInterval = 150;
-            } else {
-                updateInterval = 250; // Extremely complex models at high speed - minimal updates
-            }
-        }
-
-        // Force immediate update at slow speeds (interval=0), or when counter reaches interval
-        if (updateInterval === 0 || this.updateCounter >= updateInterval) {
-            this.updateLineMesh();
-            this.updateCounter = 0;
-        }
     }
 
     /**
@@ -1075,78 +1024,113 @@ class PrinterSimulator {
     }
 
     /**
-     * Freeze the current segment as static geometry
-     * Called when a travel move occurs (meaning the current segment is complete)
+     * Mark the current segment as complete — saves its path data for later
+     * batch-freezing. No geometry is created here; that happens in
+     * _flushPendingFreezes() once per animation frame.
      */
     freezeSegment() {
         if (this.currentSegment.length < 2) return;
 
         const segmentCopy = [...this.currentSegment];
         this.allPathSegments.push(segmentCopy);
+        this._pendingFreezeSegments.push(segmentCopy);
+
+        // Dispose stale active mesh (it still shows the old currentSegment data)
+        if (this.lineMesh) {
+            this.lineMesh.dispose();
+            this.lineMesh = null;
+        }
+
+        // Reset current segment
+        this.currentSegment = [];
+    }
+
+    /**
+     * Batch-create frozen tube geometry from all pending segments.
+     * Called once per animation frame to amortize CreateTube cost.
+     */
+    _flushPendingFreezes() {
+        if (this._pendingFreezeSegments.length === 0) return;
 
         const radius = this.lineThickness / 2;
         const colorToUse = this.lockedPrintColor || this.filamentColor;
         const emissiveStrength = 1 - this.lightingSettings.detailLevel;
 
-        // Determine material for frozen segment
-        let material;
-        if (this.rainbowMode) {
-            // Rainbow mode: each segment gets unique color
-            const currentLayer = Math.floor(this.totalPointCount / 100);
-            const layerColor = this.getLayerColor(currentLayer);
-            material = new BABYLON.StandardMaterial(`frozen_rainbow_${this.frozenMeshes.length}`, this.scene);
-            material.diffuseColor = layerColor;
-            material.emissiveColor = new BABYLON.Color3(
-                layerColor.r * emissiveStrength,
-                layerColor.g * emissiveStrength,
-                layerColor.b * emissiveStrength
+        // Ensure shared frozen material exists (non-rainbow)
+        if (!this.rainbowMode && !this.frozenMaterial) {
+            this.frozenMaterial = new BABYLON.StandardMaterial("frozenPrintMaterial", this.scene);
+            this.frozenMaterial.diffuseColor = colorToUse.clone();
+            this.frozenMaterial.emissiveColor = new BABYLON.Color3(
+                colorToUse.r * emissiveStrength,
+                colorToUse.g * emissiveStrength,
+                colorToUse.b * emissiveStrength
             );
-            material.specularColor = new BABYLON.Color3(0, 0, 0);
-            material.backFaceCulling = false;
-            material.freeze();
-        } else {
-            // Non-rainbow: share a single frozen material
-            if (!this.frozenMaterial) {
-                this.frozenMaterial = new BABYLON.StandardMaterial("frozenPrintMaterial", this.scene);
-                this.frozenMaterial.diffuseColor = colorToUse.clone();
-                this.frozenMaterial.emissiveColor = new BABYLON.Color3(
-                    colorToUse.r * emissiveStrength,
-                    colorToUse.g * emissiveStrength,
-                    colorToUse.b * emissiveStrength
+            this.frozenMaterial.specularColor = new BABYLON.Color3(0, 0, 0);
+            this.frozenMaterial.backFaceCulling = false;
+            this.frozenMaterial.freeze();
+        }
+
+        // Create tubes for all pending segments in one batch
+        const tubeMeshes = [];
+        for (let i = 0; i < this._pendingFreezeSegments.length; i++) {
+            const segment = this._pendingFreezeSegments[i];
+            if (segment.length < 2) continue;
+
+            let material;
+            if (this.rainbowMode) {
+                const currentLayer = Math.floor((this.frozenMeshes.length + i) * 3);
+                const layerColor = this.getLayerColor(currentLayer);
+                material = new BABYLON.StandardMaterial(`frozen_rainbow_${this.frozenMeshes.length + i}`, this.scene);
+                material.diffuseColor = layerColor;
+                material.emissiveColor = new BABYLON.Color3(
+                    layerColor.r * emissiveStrength,
+                    layerColor.g * emissiveStrength,
+                    layerColor.b * emissiveStrength
                 );
-                this.frozenMaterial.specularColor = new BABYLON.Color3(0, 0, 0);
-                this.frozenMaterial.backFaceCulling = false;
-                this.frozenMaterial.freeze();
+                material.specularColor = new BABYLON.Color3(0, 0, 0);
+                material.backFaceCulling = false;
+                material.freeze();
+            } else {
+                material = this.frozenMaterial;
             }
-            material = this.frozenMaterial;
+
+            try {
+                const tube = BABYLON.MeshBuilder.CreateTube(`frozen_seg_${this.frozenMeshes.length + i}`, {
+                    path: segment,
+                    radius: radius,
+                    tessellation: 3,
+                    cap: BABYLON.Mesh.NO_CAP,
+                    updatable: false
+                }, this.scene);
+                tube.material = material;
+                tubeMeshes.push(tube);
+            } catch (e) {
+                // Skip invalid segments
+            }
         }
 
-        try {
-            const tube = BABYLON.MeshBuilder.CreateTube(`frozen_seg_${this.frozenMeshes.length}`, {
-                path: segmentCopy,
-                radius: radius,
-                tessellation: 3,
-                cap: BABYLON.Mesh.NO_CAP,
-                updatable: false
-            }, this.scene);
+        this._pendingFreezeSegments = [];
 
-            tube.material = material;
-            tube.renderingGroupId = 1;
-            tube.isPickable = false;
-            tube.freezeWorldMatrix();
-
-            this.frozenMeshes.push(tube);
-
-            // Merge frozen meshes periodically to reduce draw calls
-            if (this.frozenMeshes.length > 15) {
-                this.mergeFrozenMeshes();
+        // Merge the batch into one frozen mesh (single draw call)
+        if (tubeMeshes.length > 0) {
+            let batchMesh;
+            if (tubeMeshes.length === 1) {
+                batchMesh = tubeMeshes[0];
+            } else {
+                batchMesh = BABYLON.Mesh.MergeMeshes(tubeMeshes, true, true, undefined, false, true);
             }
-        } catch (e) {
-            // Skip invalid segments
-        }
+            if (batchMesh) {
+                batchMesh.renderingGroupId = 1;
+                batchMesh.isPickable = false;
+                batchMesh.freezeWorldMatrix();
+                this.frozenMeshes.push(batchMesh);
 
-        // Reset current segment
-        this.currentSegment = [];
+                // Consolidate all frozen meshes periodically
+                if (this.frozenMeshes.length > 10) {
+                    this.mergeFrozenMeshes();
+                }
+            }
+        }
     }
 
     /**
@@ -1454,9 +1438,11 @@ class PrinterSimulator {
     startRenderLoop() {
         this.engine.runRenderLoop(() => this.scene.render());
 
-        window.addEventListener('resize', () => {
-            this.engine.resize();
-        });
+        // Only bind resize once to avoid listener leaks
+        if (!this._resizeHandler) {
+            this._resizeHandler = () => this.engine.resize();
+            window.addEventListener('resize', this._resizeHandler);
+        }
     }
 
     /**
