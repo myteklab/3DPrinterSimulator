@@ -1548,7 +1548,13 @@ function exportModel(format) {
         if (format === 'stl') {
             simulator.exportAsSTL();
         } else if (format === 'gltf') {
-            simulator.exportAsGLTF();
+            // If print is complete and we have toolpath data, export printed geometry
+            if (isPrintComplete && simulator.allPathSegments && simulator.allPathSegments.length > 0) {
+                const layerHeight = parseFloat(document.getElementById('dock-layer-height')?.value) || 0.2;
+                simulator.exportPrintedGLB(layerHeight);
+            } else {
+                simulator.exportAsGLTF();
+            }
         }
     } catch (error) {
         console.error('Export failed:', error);
@@ -1632,6 +1638,12 @@ async function exportToAssets(format) {
 async function generateGLBData() {
     if (!simulator || !simulator.scene) {
         return null;
+    }
+
+    // If print is complete and we have toolpath data, export printed geometry
+    if (isPrintComplete && simulator.allPathSegments && simulator.allPathSegments.length > 0) {
+        const layerHeight = parseFloat(document.getElementById('dock-layer-height')?.value) || 0.2;
+        return await simulator.exportPrintedGLBData(layerHeight);
     }
 
     const clones = [];

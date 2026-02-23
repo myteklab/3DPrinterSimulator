@@ -2059,6 +2059,273 @@ class PrinterSimulator {
     }
 
     /**
+     * Build rectangular-bead geometry from allPathSegments.
+     * Returns {positions, normals, indices} suitable for raw VertexData.
+     *
+     * Each path point gets a rectangular cross-section (4 verts: TL TR BR BL).
+     * Adjacent rings are connected with 8 triangles. End caps close the tube.
+     *
+     * Coordinate system: Babylon Y-up. Beads are horizontal so the perpendicular
+     * plane is XZ (horizontal spread) + Y (layer height).
+     */
+    _buildPrintedGeometry(layerHeight) {
+        const segments = this.allPathSegments;
+        if (!segments || segments.length === 0) return null;
+
+        const halfW = this.lineThickness * 0.6;  // half-width of bead (horizontal)
+        const halfH = layerHeight * 0.5;          // half-height of bead (vertical)
+        const TARGET_POINTS = 20000;
+
+        // Classify segments: measure total points and identify shell vs interior
+        // Shell = segments whose points are within 1mm of min/max Z
+        let minZ = Infinity, maxZ = -Infinity;
+        let totalOrigPoints = 0;
+        for (let s = 0; s < segments.length; s++) {
+            const seg = segments[s];
+            totalOrigPoints += seg.length;
+            for (let i = 0; i < seg.length; i++) {
+                const z = seg[i].z;
+                if (z < minZ) minZ = z;
+                if (z > maxZ) maxZ = z;
+            }
+        }
+
+        const shellMargin = 1.0; // mm
+        const shellMinZ = minZ + shellMargin;
+        const shellMaxZ = maxZ - shellMargin;
+
+        // Classify each segment
+        const classified = [];
+        let shellShortPts = 0;
+        let longPts = 0;
+        let interiorShortPts = 0;
+
+        for (let s = 0; s < segments.length; s++) {
+            const seg = segments[s];
+            if (seg.length < 2) continue;
+
+            // Check if segment is in shell zone (any point near min/max Z)
+            let isShell = false;
+            for (let i = 0; i < seg.length; i++) {
+                const z = seg[i].z;
+                if (z <= shellMinZ || z >= shellMaxZ) {
+                    isShell = true;
+                    break;
+                }
+            }
+
+            const isLong = seg.length > 4;
+            classified.push({ seg, isShell, isLong });
+
+            if (isLong) {
+                longPts += seg.length;
+            } else if (isShell) {
+                shellShortPts += seg.length;
+            } else {
+                interiorShortPts += seg.length;
+            }
+        }
+
+        // Budget: shell short always kept, long segments simplified to ~50% points,
+        // interior short subsampled to fill remaining budget
+        const longBudget = Math.ceil(longPts * 0.5);
+        const remaining = Math.max(0, TARGET_POINTS - shellShortPts - longBudget);
+        const interiorRate = interiorShortPts > 0 ? Math.min(1.0, remaining / interiorShortPts) : 0;
+
+        // Build geometry arrays
+        // Each kept point = 4 verts, each ring pair = 8 tris (24 indices), each cap = 2 tris (6 indices)
+        const estPoints = shellShortPts + longBudget + Math.ceil(interiorShortPts * interiorRate);
+        const positions = [];
+        const normals = [];
+        const indices = [];
+        let vtxOffset = 0;
+
+        for (let c = 0; c < classified.length; c++) {
+            const { seg, isShell, isLong } = classified[c];
+
+            // Determine which points to keep
+            let points;
+            if (isLong) {
+                // Simplify: keep first, last, and every Nth
+                const step = Math.max(2, Math.round(seg.length / (seg.length * 0.5)));
+                points = [seg[0]];
+                for (let i = step; i < seg.length - 1; i += step) {
+                    points.push(seg[i]);
+                }
+                points.push(seg[seg.length - 1]);
+            } else if (!isShell) {
+                // Interior short: subsample
+                if (Math.random() > interiorRate) continue;
+                points = seg;
+            } else {
+                // Shell short: always keep
+                points = seg;
+            }
+
+            if (points.length < 2) continue;
+
+            const segStart = vtxOffset;
+
+            for (let i = 0; i < points.length; i++) {
+                const pt = points[i];
+
+                // Direction vector for this point
+                let dir;
+                if (i < points.length - 1) {
+                    dir = points[i + 1].subtract(pt);
+                } else {
+                    dir = pt.subtract(points[i - 1]);
+                }
+
+                // Perpendicular in XZ plane (horizontal)
+                const len = Math.sqrt(dir.x * dir.x + dir.z * dir.z);
+                let perpX, perpZ;
+                if (len > 0.0001) {
+                    perpX = -dir.z / len;
+                    perpZ = dir.x / len;
+                } else {
+                    perpX = 1;
+                    perpZ = 0;
+                }
+
+                // 4 vertices per point: TL, TR, BR, BL
+                // TL: -perp * halfW, +halfH
+                positions.push(pt.x + perpX * (-halfW), pt.y + halfH, pt.z + perpZ * (-halfW));
+                normals.push(0, 1, 0); // top face normal
+
+                // TR: +perp * halfW, +halfH
+                positions.push(pt.x + perpX * halfW, pt.y + halfH, pt.z + perpZ * halfW);
+                normals.push(0, 1, 0);
+
+                // BR: +perp * halfW, -halfH
+                positions.push(pt.x + perpX * halfW, pt.y - halfH, pt.z + perpZ * halfW);
+                normals.push(0, -1, 0); // bottom face normal
+
+                // BL: -perp * halfW, -halfH
+                positions.push(pt.x + perpX * (-halfW), pt.y - halfH, pt.z + perpZ * (-halfW));
+                normals.push(0, -1, 0);
+
+                vtxOffset += 4;
+            }
+
+            // Connect rings: 8 triangles per pair
+            for (let i = 0; i < points.length - 1; i++) {
+                const base = segStart + i * 4;
+                const next = base + 4;
+
+                // Top face (TL, TR)
+                indices.push(base + 0, next + 0, next + 1);
+                indices.push(base + 0, next + 1, base + 1);
+
+                // Right face (TR, BR)
+                indices.push(base + 1, next + 1, next + 2);
+                indices.push(base + 1, next + 2, base + 2);
+
+                // Bottom face (BR, BL)
+                indices.push(base + 2, next + 2, next + 3);
+                indices.push(base + 2, next + 3, base + 3);
+
+                // Left face (BL, TL)
+                indices.push(base + 3, next + 3, next + 0);
+                indices.push(base + 3, next + 0, base + 0);
+            }
+
+            // Start cap (2 triangles)
+            const s0 = segStart;
+            indices.push(s0 + 0, s0 + 1, s0 + 2);
+            indices.push(s0 + 0, s0 + 2, s0 + 3);
+
+            // End cap (2 triangles)
+            const e0 = segStart + (points.length - 1) * 4;
+            indices.push(e0 + 1, e0 + 0, e0 + 3);
+            indices.push(e0 + 1, e0 + 3, e0 + 2);
+        }
+
+        if (positions.length === 0) return null;
+
+        return {
+            positions: new Float32Array(positions),
+            normals: new Float32Array(normals),
+            indices: new Uint32Array(indices)
+        };
+    }
+
+    /**
+     * Export the 3D-printed model as GLB (download to computer).
+     * Builds rectangular bead geometry from actual toolpath segments.
+     */
+    async exportPrintedGLB(layerHeight) {
+        const geom = this._buildPrintedGeometry(layerHeight);
+        if (!geom) {
+            alert('No print data available for export.');
+            return;
+        }
+
+        const mesh = new BABYLON.Mesh('printed_export', this.scene);
+        const vertexData = new BABYLON.VertexData();
+        vertexData.positions = geom.positions;
+        vertexData.normals = geom.normals;
+        vertexData.indices = geom.indices;
+        vertexData.applyToMesh(mesh);
+
+        const exportMaterial = new BABYLON.StandardMaterial('printed_export_mat', this.scene);
+        const colorToUse = this.lockedPrintColor || this.filamentColor;
+        exportMaterial.diffuseColor = colorToUse.clone();
+        exportMaterial.specularColor = new BABYLON.Color3(0, 0, 0); // matte
+        exportMaterial.alpha = 1.0;
+        exportMaterial.backFaceCulling = false;
+        mesh.material = exportMaterial;
+
+        try {
+            const result = await BABYLON.GLTF2Export.GLBAsync(this.scene, 'printed_model', {
+                shouldExportNode: (node) => node === mesh
+            });
+            result.downloadFiles();
+            console.log('Printed GLB exported successfully');
+        } catch (error) {
+            console.error('Printed GLB export error:', error);
+            alert('Failed to export printed GLB: ' + error.message);
+        } finally {
+            mesh.dispose();
+            exportMaterial.dispose();
+        }
+    }
+
+    /**
+     * Export the 3D-printed model as GLB and return the blob (for Save to Files).
+     * Shares geometry building with exportPrintedGLB.
+     */
+    async exportPrintedGLBData(layerHeight) {
+        const geom = this._buildPrintedGeometry(layerHeight);
+        if (!geom) return null;
+
+        const mesh = new BABYLON.Mesh('printed_export', this.scene);
+        const vertexData = new BABYLON.VertexData();
+        vertexData.positions = geom.positions;
+        vertexData.normals = geom.normals;
+        vertexData.indices = geom.indices;
+        vertexData.applyToMesh(mesh);
+
+        const exportMaterial = new BABYLON.StandardMaterial('printed_export_mat', this.scene);
+        const colorToUse = this.lockedPrintColor || this.filamentColor;
+        exportMaterial.diffuseColor = colorToUse.clone();
+        exportMaterial.specularColor = new BABYLON.Color3(0, 0, 0);
+        exportMaterial.alpha = 1.0;
+        exportMaterial.backFaceCulling = false;
+        mesh.material = exportMaterial;
+
+        try {
+            const result = await BABYLON.GLTF2Export.GLBAsync(this.scene, 'printed_model', {
+                shouldExportNode: (node) => node === mesh
+            });
+            return result.glTFFiles['printed_model.glb'];
+        } finally {
+            mesh.dispose();
+            exportMaterial.dispose();
+        }
+    }
+
+    /**
      * Update scene lighting based on user controls
      * @param {Object} settings - { brightness: 0-1.5, shadowSoftness: 0-1, detailLevel: 0-1 }
      */
