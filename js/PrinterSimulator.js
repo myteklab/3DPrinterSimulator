@@ -2063,7 +2063,8 @@ class PrinterSimulator {
      * Returns {positions, normals, indices} suitable for raw VertexData.
      *
      * Each path point gets a rectangular cross-section (4 verts: TL TR BR BL).
-     * Adjacent rings are connected with 8 triangles. End caps close the tube.
+     * Adjacent rings are connected with 8 triangles. No end caps (realistic
+     * crosshatch look for top/bottom layers, avoids filling holes in models).
      *
      * Coordinate system: Babylon Y-up. Beads are horizontal so the perpendicular
      * plane is XZ (horizontal spread) + Y (layer height).
@@ -2072,27 +2073,39 @@ class PrinterSimulator {
         const segments = this.allPathSegments;
         if (!segments || segments.length === 0) return null;
 
-        const halfW = this.lineThickness * 0.6;  // half-width of bead (horizontal)
-        const halfH = layerHeight * 0.5;          // half-height of bead (vertical)
-        const TARGET_POINTS = 20000;
+        const halfW = this.lineThickness * 1.0;  // wider beads for solid walls
+        const halfH = layerHeight * 0.6;          // taller for vertical overlap
+        const TARGET_POINTS = 30000;
 
         // Classify segments: measure total points and identify shell vs interior
-        // Shell = segments whose points are within 1mm of min/max Z
+        // Shell = segments near extremes of Z (depth) or Y (height) axis
         let minZ = Infinity, maxZ = -Infinity;
+        let minY = Infinity, maxY = -Infinity;
         let totalOrigPoints = 0;
         for (let s = 0; s < segments.length; s++) {
             const seg = segments[s];
             totalOrigPoints += seg.length;
             for (let i = 0; i < seg.length; i++) {
                 const z = seg[i].z;
+                const y = seg[i].y;
                 if (z < minZ) minZ = z;
                 if (z > maxZ) maxZ = z;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
             }
         }
 
-        const shellMargin = 1.0; // mm
-        const shellMinZ = minZ + shellMargin;
-        const shellMaxZ = maxZ - shellMargin;
+        const shellZone = 1.0; // mm
+        const bottomZ = minZ + shellZone;
+        const topZ = maxZ - shellZone;
+        const bottomY = minY + shellZone;
+        const topY = maxY - shellZone;
+
+        function isShellSegment(seg) {
+            const z = seg[0].z;
+            const y = seg[0].y;
+            return z <= bottomZ || z >= topZ || y <= bottomY || y >= topY;
+        }
 
         // Classify each segment
         const classified = [];
@@ -2104,16 +2117,7 @@ class PrinterSimulator {
             const seg = segments[s];
             if (seg.length < 2) continue;
 
-            // Check if segment is in shell zone (any point near min/max Z)
-            let isShell = false;
-            for (let i = 0; i < seg.length; i++) {
-                const z = seg[i].z;
-                if (z <= shellMinZ || z >= shellMaxZ) {
-                    isShell = true;
-                    break;
-                }
-            }
-
+            const isShell = isShellSegment(seg);
             const isLong = seg.length > 4;
             classified.push({ seg, isShell, isLong });
 
@@ -2126,19 +2130,55 @@ class PrinterSimulator {
             }
         }
 
-        // Budget: shell short always kept, long segments simplified to ~50% points,
-        // interior short subsampled to fill remaining budget
-        const longBudget = Math.ceil(longPts * 0.5);
-        const remaining = Math.max(0, TARGET_POINTS - shellShortPts - longBudget);
-        const interiorRate = interiorShortPts > 0 ? Math.min(1.0, remaining / interiorShortPts) : 0;
+        // Budget: shell capped at 50% of target, remainder split 60/40 long/interior
+        const shellCap = Math.floor(TARGET_POINTS * 0.5);
+        const shellSkip = shellShortPts > shellCap ? Math.max(1, Math.ceil(shellShortPts / shellCap)) : 1;
+        const effectiveShellPts = shellSkip > 1 ? Math.floor(shellShortPts / shellSkip) : shellShortPts;
+        const remaining = Math.max(TARGET_POINTS - effectiveShellPts, 4000);
+        const longBudget = Math.floor(remaining * 0.6);
+        const interiorBudget = remaining - longBudget;
+        const longSkip = longPts > longBudget ? Math.max(2, Math.ceil(longPts / longBudget)) : 1;
+        const interiorRate = interiorShortPts > 0 ? Math.min(1.0, interiorBudget / interiorShortPts) : 0;
+
+        // Corner-preserving path simplification for long segments
+        function simplifyPath(points) {
+            if (points.length <= 2 || longSkip <= 1) return points;
+            const result = [points[0]];
+            const cornerThreshold = 0.5; // cross product magnitude ~30 degrees
+            let lastAdded = 0;
+            for (let i = 1; i < points.length - 1; i++) {
+                const dx1 = points[i].x - points[i-1].x;
+                const dz1 = points[i].z - points[i-1].z;
+                const dx2 = points[i+1].x - points[i].x;
+                const dz2 = points[i+1].z - points[i].z;
+                const len1 = Math.sqrt(dx1*dx1 + dz1*dz1);
+                const len2 = Math.sqrt(dx2*dx2 + dz2*dz2);
+                if (len1 > 0.001 && len2 > 0.001) {
+                    const cross = Math.abs(dx1*dz2 - dz1*dx2) / (len1 * len2);
+                    if (cross > cornerThreshold) {
+                        if (i !== lastAdded) {
+                            result.push(points[i]);
+                            lastAdded = i;
+                        }
+                        continue;
+                    }
+                }
+                if (i - lastAdded >= longSkip) {
+                    result.push(points[i]);
+                    lastAdded = i;
+                }
+            }
+            result.push(points[points.length - 1]);
+            return result;
+        }
 
         // Build geometry arrays
-        // Each kept point = 4 verts, each ring pair = 8 tris (24 indices), each cap = 2 tris (6 indices)
-        const estPoints = shellShortPts + longBudget + Math.ceil(interiorShortPts * interiorRate);
         const positions = [];
         const normals = [];
         const indices = [];
+        const inv = 0.7071; // 1/sqrt(2) for 45-degree blended normals
         let vtxOffset = 0;
+        let shellCounter = 0;
 
         for (let c = 0; c < classified.length; c++) {
             const { seg, isShell, isLong } = classified[c];
@@ -2146,19 +2186,18 @@ class PrinterSimulator {
             // Determine which points to keep
             let points;
             if (isLong) {
-                // Simplify: keep first, last, and every Nth
-                const step = Math.max(2, Math.round(seg.length / (seg.length * 0.5)));
-                points = [seg[0]];
-                for (let i = step; i < seg.length - 1; i += step) {
-                    points.push(seg[i]);
+                // Simplify with corner preservation
+                points = simplifyPath(seg);
+            } else if (isShell) {
+                // Shell short: subsample if over cap
+                if (shellSkip > 1) {
+                    shellCounter++;
+                    if (shellCounter % shellSkip !== 0) continue;
                 }
-                points.push(seg[seg.length - 1]);
-            } else if (!isShell) {
-                // Interior short: subsample
-                if (Math.random() > interiorRate) continue;
                 points = seg;
             } else {
-                // Shell short: always keep
+                // Interior short: subsample
+                if (Math.random() > interiorRate) continue;
                 points = seg;
             }
 
@@ -2189,21 +2228,22 @@ class PrinterSimulator {
                 }
 
                 // 4 vertices per point: TL, TR, BR, BL
+                // 45-degree blended normals so side faces catch light
                 // TL: -perp * halfW, +halfH
                 positions.push(pt.x + perpX * (-halfW), pt.y + halfH, pt.z + perpZ * (-halfW));
-                normals.push(0, 1, 0); // top face normal
+                normals.push(perpX * inv, inv, perpZ * inv);
 
                 // TR: +perp * halfW, +halfH
                 positions.push(pt.x + perpX * halfW, pt.y + halfH, pt.z + perpZ * halfW);
-                normals.push(0, 1, 0);
+                normals.push(-perpX * inv, inv, -perpZ * inv);
 
                 // BR: +perp * halfW, -halfH
                 positions.push(pt.x + perpX * halfW, pt.y - halfH, pt.z + perpZ * halfW);
-                normals.push(0, -1, 0); // bottom face normal
+                normals.push(-perpX * inv, -inv, -perpZ * inv);
 
                 // BL: -perp * halfW, -halfH
                 positions.push(pt.x + perpX * (-halfW), pt.y - halfH, pt.z + perpZ * (-halfW));
-                normals.push(0, -1, 0);
+                normals.push(perpX * inv, -inv, perpZ * inv);
 
                 vtxOffset += 4;
             }
@@ -2230,15 +2270,7 @@ class PrinterSimulator {
                 indices.push(base + 3, next + 0, base + 0);
             }
 
-            // Start cap (2 triangles)
-            const s0 = segStart;
-            indices.push(s0 + 0, s0 + 1, s0 + 2);
-            indices.push(s0 + 0, s0 + 2, s0 + 3);
-
-            // End cap (2 triangles)
-            const e0 = segStart + (points.length - 1) * 4;
-            indices.push(e0 + 1, e0 + 0, e0 + 3);
-            indices.push(e0 + 1, e0 + 3, e0 + 2);
+            // No end caps: crosshatch from infill lines is realistic
         }
 
         if (positions.length === 0) return null;
@@ -2272,6 +2304,9 @@ class PrinterSimulator {
         const colorToUse = this.lockedPrintColor || this.filamentColor;
         exportMaterial.diffuseColor = colorToUse.clone();
         exportMaterial.specularColor = new BABYLON.Color3(0, 0, 0); // matte
+        exportMaterial.emissiveColor = new BABYLON.Color3(
+            colorToUse.r * 0.35, colorToUse.g * 0.35, colorToUse.b * 0.35
+        );
         exportMaterial.alpha = 1.0;
         exportMaterial.backFaceCulling = false;
         mesh.material = exportMaterial;
@@ -2310,6 +2345,9 @@ class PrinterSimulator {
         const colorToUse = this.lockedPrintColor || this.filamentColor;
         exportMaterial.diffuseColor = colorToUse.clone();
         exportMaterial.specularColor = new BABYLON.Color3(0, 0, 0);
+        exportMaterial.emissiveColor = new BABYLON.Color3(
+            colorToUse.r * 0.35, colorToUse.g * 0.35, colorToUse.b * 0.35
+        );
         exportMaterial.alpha = 1.0;
         exportMaterial.backFaceCulling = false;
         mesh.material = exportMaterial;
