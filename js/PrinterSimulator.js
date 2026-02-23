@@ -2022,6 +2022,7 @@ class PrinterSimulator {
         exportMaterial.diffuseColor = this.filamentColor.clone();
         exportMaterial.specularColor = new BABYLON.Color3(0.2, 0.2, 0.2);
         exportMaterial.alpha = 1.0; // Fully opaque for export
+        exportMaterial.backFaceCulling = false;
 
         // Temporarily replace materials with colored material for export
         const originalMaterials = [];
