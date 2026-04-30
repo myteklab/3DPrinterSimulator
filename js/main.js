@@ -664,6 +664,48 @@ async function loadSTLFromURLCore(url) {
 }
 
 /**
+ * Restore an uploaded model from STL text saved inside a project.
+ * Mirrors loadSTLFromURLCore but skips the fetch since the geometry
+ * is already in hand. Used by loadProjectData when modelData has no url.
+ */
+async function loadSTLFromTextCore(stlText, name) {
+    try {
+        const tempSlicer = new STLSlicer();
+        tempSlicer.parseSTLText(stlText);
+        if (!tempSlicer.mesh || tempSlicer.mesh.length === 0) {
+            console.warn(`Restored STL "${name}" parsed to zero triangles, skipping`);
+            return null;
+        }
+        const bbox = tempSlicer.getBoundingBox();
+        const triangleCount = tempSlicer.mesh.length;
+        const modelId = ++modelIdCounter;
+
+        const model = {
+            id: modelId,
+            name: name || 'restored.stl',
+            file: null,
+            mesh: tempSlicer.mesh,
+            previewMesh: null,
+            position: { x: 0, y: 0, z: 0 },
+            rotation: { x: 0, y: 0, z: 0 },
+            scale: { x: 1, y: 1, z: 1 },
+            boundingBox: bbox,
+            triangleCount: triangleCount,
+        };
+
+        loadedModels.push(model);
+        createGhostPreview(model);
+        updateModelList();
+        updateSliceButton(false, '🔪 Slice');
+        updateSliceStatus(`${loadedModels.length} model(s) ready to slice`);
+        return model;
+    } catch (error) {
+        console.error('Error restoring STL from saved data:', error);
+        return null;
+    }
+}
+
+/**
  * Slice all models on build plate into G-code
  */
 async function sliceSTL() {
@@ -2725,9 +2767,34 @@ function loadProjectData(data) {
                             }
                         }
                     });
+                } else if (modelData.stlData) {
+                    // Model was uploaded from file - restore from embedded STL geometry
+                    console.log(`Restoring uploaded model "${modelData.name}" from saved STL data...`);
+                    loadSTLFromTextCore(modelData.stlData, modelData.name).then((restored) => {
+                        if (!restored) return;
+                        restored.position = modelData.position;
+                        restored.rotation = modelData.rotation;
+                        restored.scale = modelData.scale;
+                        if (restored.previewMesh) {
+                            restored.previewMesh.position = new BABYLON.Vector3(
+                                modelData.position.x,
+                                modelData.position.y,
+                                modelData.position.z
+                            );
+                            restored.previewMesh.rotation = new BABYLON.Vector3(
+                                BABYLON.Tools.ToRadians(modelData.rotation.x),
+                                BABYLON.Tools.ToRadians(modelData.rotation.y),
+                                BABYLON.Tools.ToRadians(modelData.rotation.z)
+                            );
+                            restored.previewMesh.scaling = new BABYLON.Vector3(
+                                modelData.scale.x,
+                                modelData.scale.y,
+                                modelData.scale.z
+                            );
+                        }
+                    });
                 } else {
-                    // Model was uploaded from file - can't reload, notify user
-                    console.warn(`Model "${modelData.name}" was uploaded from file and cannot be restored. Please re-upload.`);
+                    console.warn(`Model "${modelData.name}" has no URL or saved geometry, cannot restore.`);
                 }
             }
         }, 1000);

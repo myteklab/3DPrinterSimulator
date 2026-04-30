@@ -32,6 +32,16 @@ class STLSlicer {
     }
 
     /**
+     * Parse ASCII STL from a text string (used when restoring uploaded
+     * models from saved project data, where geometry was serialized via
+     * generateSTLFromMesh in main.js).
+     */
+    parseSTLText(text) {
+        const buffer = new TextEncoder().encode(text).buffer;
+        return this.parseASCIISTL(buffer);
+    }
+
+    /**
      * Parse binary STL format
      */
     parseBinarySTL(buffer, view) {
