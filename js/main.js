@@ -825,16 +825,14 @@ async function sliceSTL() {
 
         if (minZ < -0.1) { // Allow tiny tolerance for floating point
             showToast(`Model extends below build plate (${minZ.toFixed(2)}mm). Use "Drop to Build Plate" to fix.`, 'error', 4000);
-            sliceBtn.disabled = false;
-            sliceBtn.textContent = `🔪 Slice`;
+            updateSliceButton(false, '🔪 Slice');
             return;
         }
 
         if (minZ > 0.1) {
             const proceed = confirm(`Warning: Model is floating ${minZ.toFixed(2)}mm above build plate.\n\nThis will waste filament printing air. Continue anyway?`);
             if (!proceed) {
-                sliceBtn.disabled = false;
-                sliceBtn.textContent = `🔪 Slice`;
+                updateSliceButton(false, '🔪 Slice');
                 return;
             }
         }
@@ -2606,7 +2604,7 @@ function serializeProjectData() {
             infillPattern: getElementValue('dock-infill-pattern', 'learn-infill-pattern', 'grid'),
             infillDensity: parseInt(getElementValue('dock-infill-density', 'learn-infill-density', '20')),
             topBottomLayers: parseInt(getElementValue('dock-shell-layers', 'learn-shell-layers', '3')),
-            filamentType: getElementValue('filament-type', 'learn-filament-type', 'PLA'),
+            filamentType: getElementValue('dock-filament-type', 'filament-type', 'pla'),
             filamentColor: getElementValue('filament-color', 'learn-filament-color', '#FF6600'),
             lineThickness: 1.0, // Fixed value - not exposed in simple UI
             qualityPreset: getElementValue('quality-preset', 'learn-quality-preset', 'normal')
@@ -2717,7 +2715,8 @@ function loadProjectData(data) {
         setElementText('top-bottom-layers-value', settings.topBottomLayers);
     }
     if (settings.filamentType) {
-        setElementValue('dock-filament-type', settings.filamentType);
+        // Saves before the dock select was read stored 'PLA', which matches no option.
+        setElementValue('dock-filament-type', String(settings.filamentType).toLowerCase());
         setElementValue('filament-type', settings.filamentType);
     }
     if (settings.filamentColor) {

@@ -551,9 +551,12 @@ class STLSlicer {
                     // Sparse infill
                     if (infillDensity > 0) {
                         gcode.push(`; Sparse infill (${infillDensity}%)`);
-                        const infillLines = this.generateLayerInfill(bbox, infillPattern, infillDensity, paths, 0);
-                        for (const line of infillLines) {
-                            gcode.push(line.replace(/E\d+/g, match => `E${extrusionCounter += 3}`));
+                        const passes = infillPattern === 'grid' ? [0, 90] : [0];
+                        for (const angle of passes) {
+                            const infillLines = this.generateLayerInfill(bbox, infillPattern, infillDensity, paths, angle, passes.length);
+                            for (const line of infillLines) {
+                                gcode.push(line.replace(/E\d+/g, match => `E${extrusionCounter += 3}`));
+                            }
                         }
                     }
                 }
@@ -671,14 +674,14 @@ class STLSlicer {
 
                         if (infillPattern === 'grid') {
                             // Grid pattern: lines in both directions (0° and 90°)
-                            const infill1 = this.generateLayerInfill(bbox, 'lines', infillDensity, paths, 0);
+                            const infill1 = this.generateLayerInfill(bbox, 'lines', infillDensity, paths, 0, 2);
                             for (const line of infill1) {
                                 gcode.push(line.replace(/E\d+/g, match => {
                                     return `E${extrusionCounter += 3}`;
                                 }));
                             }
 
-                            const infill2 = this.generateLayerInfill(bbox, 'lines', infillDensity, paths, 90);
+                            const infill2 = this.generateLayerInfill(bbox, 'lines', infillDensity, paths, 90, 2);
                             for (const line of infill2) {
                                 gcode.push(line.replace(/E\d+/g, match => {
                                     return `E${extrusionCounter += 3}`;
@@ -891,7 +894,9 @@ class STLSlicer {
      * @param {Array} paths - Perimeter paths
      * @param {Number} angle - Infill angle in degrees (0 = horizontal, 90 = vertical)
      */
-    generateLayerInfill(bbox, pattern, density, paths = null, angle = 0) {
+    // directions: 2 when the caller lays a second pass at 90 degrees (grid), so each
+    // pass is half as dense and the pair together reaches the requested density.
+    generateLayerInfill(bbox, pattern, density, paths = null, angle = 0, directions = 1) {
         if (!bbox || density === 0) return [];
 
         const gcode = [];
@@ -906,10 +911,11 @@ class STLSlicer {
             // This ensures no gaps regardless of nozzle size
             spacing = this.nozzleDiameter * 0.875;
         } else {
-            // Sparse infill: significant gaps between lines
-            const minSpacing = 2.0; // Minimum spacing for sparse infill (still has gaps)
-            const maxSpacing = 20;
-            spacing = minSpacing + ((100 - density) / 100) * (maxSpacing - minSpacing);
+            // Density is the share of the area covered by plastic, the way real slicers
+            // mean it: one line of nozzle width every (width / density), times the number
+            // of directions. 20% grid on a 0.4 mm nozzle is a line every 4 mm each way.
+            // The old linear 2-20 mm range put a 30 mm part at 2 lines for 20% and 3 for 60%.
+            spacing = Math.max(this.nozzleDiameter * directions / (density / 100), this.nozzleDiameter);
         }
 
         // Inset the bounding box slightly (smaller inset for better coverage)
