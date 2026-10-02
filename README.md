@@ -2,6 +2,8 @@
 
 An interactive 3D printer simulator built with Babylon.js. Learn how FDM 3D printing works by generating shapes, slicing them into G-code, and watching the print process layer by layer.
 
+**Try it in your browser, no account needed:** [mytekdev.com/tools/3d-printer-simulator](https://mytekdev.com/tools/3d-printer-simulator). The page has a live demo and explains what students learn from it.
+
 ## Features
 
 - **Learning Mode** - Generate cubes, cylinders, and pyramids with one click, then step through each layer to understand how 3D printing works
