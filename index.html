@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3D Printer Simulator</title>
-    <link rel="stylesheet" href="css/style.css?v=9">
+    <link rel="stylesheet" href="css/style.css?v=10">
     <script src="https://cdn.jsdelivr.net/npm/babylonjs@9.37.0/babylon.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/babylonjs-materials@9.37.0/babylonjs.materials.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/babylonjs-serializers@9.37.0/babylonjs.serializers.min.js"></script>
@@ -351,15 +351,15 @@
                     <div class="dock-toolbar">
                         <!-- Slice & Playback Group -->
                         <div class="toolbar-group">
-                            <button id="slice-btn" class="btn btn-primary btn-sm" disabled>&#x1F52A; Slice</button>
+                            <button id="slice-btn" class="btn btn-primary btn-sm" disabled>Slice</button>
                             <button id="play-btn" class="btn btn-sm" disabled>&#x25B6; Print</button>
-                            <button id="pause-btn" class="btn btn-sm" disabled>&#x23F8;</button>
-                            <button id="reset-btn" class="btn btn-sm">&#x21BB;</button>
+                            <button id="pause-btn" class="btn btn-sm" disabled title="Pause">&#x275A;&#x275A;</button>
+                            <button id="reset-btn" class="btn btn-sm" title="Start over">&#x21BB;</button>
                         </div>
                         <div class="toolbar-divider"></div>
                         <!-- Speed Group -->
                         <div class="toolbar-group">
-                            <label class="inline-checkbox"><input type="checkbox" id="quick-print"> &#x26A1; Quick</label>
+                            <label class="inline-checkbox"><input type="checkbox" id="quick-print"> Quick</label>
                             <label class="inline-setting">Speed:<input type="range" id="speed-slider" min="0.01" max="100" step="0.01" value="1.0"><span id="speed-value">1.0</span>x</label>
                         </div>
                         <div class="toolbar-divider"></div>
@@ -388,7 +388,7 @@
                         <div class="toolbar-divider"></div>
                         <!-- Export -->
                         <div class="toolbar-group">
-                            <button id="export-stl-btn" class="btn btn-success btn-sm">&#x1F4BE; Export</button>
+                            <button id="export-stl-btn" class="btn btn-success btn-sm">Export</button>
                         </div>
                     </div>
                     <!-- Hidden inputs to maintain compatibility -->
@@ -414,13 +414,13 @@
     <div id="export-modal" class="modal">
         <div class="modal-content" style="max-width: 700px;">
             <h2>Export Build Plate Models</h2>
-            <p style="background: rgba(187, 134, 252, 0.1); padding: 10px; border-radius: 5px; border-left: 3px solid #bb86fc; margin-bottom: 15px;">
+            <p style="background: rgba(77, 141, 255, 0.1); padding: 10px; border-radius: 5px; border-left: 3px solid #4d8dff; margin-bottom: 15px;">
                 <strong>Info:</strong> This exports your original STL models from the build plate with their current positions, rotations, and scales. All models will be merged into a single file.
             </p>
 
             <!-- Export to My Assets Section -->
-            <h3 style="margin-top: 20px; margin-bottom: 10px; color: #bb86fc; border-bottom: 1px solid #333; padding-bottom: 8px;">
-                <span style="margin-right: 8px;">&#x1F4C1;</span> Export to My Assets
+            <h3 style="margin-top: 20px; margin-bottom: 10px; color: #4d8dff; border-bottom: 1px solid #333; padding-bottom: 8px;">
+                Export to My Assets
             </h3>
             <p style="color: #888; font-size: 12px; margin-bottom: 10px;">Save to your files for use in other applications</p>
 
@@ -428,13 +428,12 @@
             <div style="margin-bottom: 15px;">
                 <label for="export-filename" style="color: #ccc; font-size: 13px; display: block; margin-bottom: 5px;">Asset Name:</label>
                 <input type="text" id="export-filename" placeholder="Enter filename (without extension)"
-                    style="width: 100%; padding: 10px 12px; background: #0f3460; border: 2px solid #1e4976; border-radius: 6px; color: #fff; font-size: 14px; box-sizing: border-box;"
-                    onfocus="this.style.borderColor='#bb86fc'" onblur="this.style.borderColor='#1e4976'">
+                    style="width: 100%; padding: 10px 12px; background: #0f1115; border: 2px solid #343a45; border-radius: 6px; color: #fff; font-size: 14px; box-sizing: border-box;"
+                    onfocus="this.style.borderColor='#4d8dff'" onblur="this.style.borderColor='#343a45'">
             </div>
 
             <div class="format-options" style="margin-bottom: 20px;">
                 <div class="format-option" onclick="exportToAssets('stl')">
-                    <div class="format-icon">&#x1F4C4;</div>
                     <h3>STL to Assets</h3>
                     <p>Save STL file to your files</p>
                     <ul>
@@ -444,7 +443,6 @@
                 </div>
 
                 <div class="format-option" onclick="exportToAssets('glb')">
-                    <div class="format-icon">&#x1F3A8;</div>
                     <h3>GLB to Assets</h3>
                     <p>Save GLB file with colors to your files</p>
                     <ul>
@@ -455,13 +453,12 @@
             </div>
 
             <!-- Export to Computer Section -->
-            <h3 style="margin-top: 20px; margin-bottom: 10px; color: #03dac6; border-bottom: 1px solid #333; padding-bottom: 8px;">
-                <span style="margin-right: 8px;">&#x1F4BB;</span> Export to Computer
+            <h3 style="margin-top: 20px; margin-bottom: 10px; color: #9aa3b2; border-bottom: 1px solid #333; padding-bottom: 8px;">
+                Export to Computer
             </h3>
             <p style="color: #888; font-size: 12px; margin-bottom: 10px;">Download to your computer for use in external software</p>
             <div class="format-options">
                 <div class="format-option" onclick="exportModel('stl')">
-                    <div class="format-icon">&#x1F4C4;</div>
                     <h3>STL Download</h3>
                     <p>Standard 3D printing format</p>
                     <ul>
@@ -471,7 +468,6 @@
                 </div>
 
                 <div class="format-option" onclick="exportModel('gltf')">
-                    <div class="format-icon">&#x1F3A8;</div>
                     <h3>GLB Download</h3>
                     <p>Modern format with colors</p>
                     <ul>
@@ -498,11 +494,11 @@
         </div>
     </div>
 
-    <script src="js/GCodeParser.js?v=9"></script>
-    <script src="js/GCodeGenerator.js?v=9"></script>
-    <script src="js/STLSlicer.js?v=9"></script>
-    <script src="js/PrinterSimulator.js?v=9"></script>
-    <script src="js/main.js?v=9"></script>
+    <script src="js/GCodeParser.js?v=10"></script>
+    <script src="js/GCodeGenerator.js?v=10"></script>
+    <script src="js/STLSlicer.js?v=10"></script>
+    <script src="js/PrinterSimulator.js?v=10"></script>
+    <script src="js/main.js?v=10"></script>
 
     <script>
     // Help content database

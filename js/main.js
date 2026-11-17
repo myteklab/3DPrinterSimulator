@@ -592,7 +592,7 @@ async function handleSTLUpload(event) {
         selectModel(modelId);
 
         // Enable slice button
-        updateSliceButton(false, '🔪 Slice');
+        updateSliceButton(false, 'Slice');
         updateSliceStatus(`${loadedModels.length} model(s) ready to slice`);
 
         console.log(`Model added: ${file.name} (${triangleCount} triangles)`);
@@ -671,7 +671,7 @@ async function loadSTLFromURLCore(url, opts = {}) {
 
     try {
         loadBtn.disabled = true;
-        loadBtn.textContent = '⏳ Loading...';
+        loadBtn.textContent = 'Loading...';
 
         console.log('Fetching STL from URL:', url);
 
@@ -751,7 +751,7 @@ async function loadSTLFromURLCore(url, opts = {}) {
         selectModel(modelId);
 
         // Enable slice button
-        updateSliceButton(false, '🔪 Slice');
+        updateSliceButton(false, 'Slice');
         updateSliceStatus(`${loadedModels.length} model(s) ready to slice`);
 
         console.log(`Model loaded from URL: ${filename} (${triangleCount} triangles)`);
@@ -822,7 +822,7 @@ async function loadSTLFromTextCore(stlText, name) {
         loadedModels.push(model);
         createGhostPreview(model);
         updateModelList();
-        updateSliceButton(false, '🔪 Slice');
+        updateSliceButton(false, 'Slice');
         updateSliceStatus(`${loadedModels.length} model(s) ready to slice`);
         return model;
     } catch (error) {
@@ -842,7 +842,7 @@ async function sliceSTL() {
         return;
     }
 
-    updateSliceButton(true, '⏳ Slicing...');
+    updateSliceButton(true, 'Slicing...');
     updateSliceStatus('Processing models...');
     showToast('Slicing models...', 'loading');
 
@@ -953,14 +953,14 @@ async function sliceSTL() {
 
         if (minZ < -0.1) { // Allow tiny tolerance for floating point
             showToast(`Model extends below build plate (${minZ.toFixed(2)}mm). Use "Drop to Build Plate" to fix.`, 'error', 4000);
-            updateSliceButton(false, '🔪 Slice');
+            updateSliceButton(false, 'Slice');
             return;
         }
 
         if (minZ > 0.1) {
             const proceed = confirm(`Warning: Model is floating ${minZ.toFixed(2)}mm above build plate.\n\nThis will waste filament printing air. Continue anyway?`);
             if (!proceed) {
-                updateSliceButton(false, '🔪 Slice');
+                updateSliceButton(false, 'Slice');
                 return;
             }
         }
@@ -1024,7 +1024,7 @@ async function sliceSTL() {
         updateSliceStatus(`Generated ${layers.length} layers`);
         showToast(`✅ Slicing complete! ${layers.length} layers generated`, 'success', 3000);
         setTimeout(() => {
-            updateSliceButton(false, '🔪 Slice');
+            updateSliceButton(false, 'Slice');
             updateSliceStatus(`${loadedModels.length} model(s) ready to slice`);
         }, 2000);
 
@@ -1041,7 +1041,7 @@ async function sliceSTL() {
     } catch (error) {
         console.error('Slicing error:', error);
         showToast(`Slicing failed: ${error.message}`, 'error', 5000);
-        updateSliceButton(false, '🔪 Slice');
+        updateSliceButton(false, 'Slice');
         updateSliceStatus('Slicing failed - check console');
     }
 }
@@ -1445,7 +1445,7 @@ function playSimulation() {
     if (quickPrintMode) {
         // Quick print mode - skip animation and heat-up
         playBtn.disabled = true;
-        playBtn.innerHTML = '⚡ Quick Printing...';
+        playBtn.innerHTML = 'Quick printing...';
 
         // Show print head briefly
         if (simulator.printHead) {
@@ -2289,7 +2289,7 @@ function removeModel(modelId, quiet) {
 
     // Disable slice button if no models
     if (loadedModels.length === 0) {
-        updateSliceButton(true, '🔪 Slice');
+        updateSliceButton(true, 'Slice');
         updateSliceStatus('Nothing on the plate. Add an STL, or switch to Learning to print a cube.');
     } else {
         updateSliceStatus(`${loadedModels.length} model(s) ready to slice`);
@@ -3212,7 +3212,7 @@ function playLearningMode() {
         simulator.pause();
         playBtn.textContent = '▶ Play';
     } else {
-        playBtn.textContent = '⏸ Pause';
+        playBtn.textContent = '\u275A\u275A Pause';
         simulator.setSpeed(sliderSpeed());
         simulator.play();
     }

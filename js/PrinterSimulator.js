@@ -78,7 +78,7 @@ class PrinterSimulator {
      */
     initScene() {
         this.scene = new BABYLON.Scene(this.engine);
-        this.scene.clearColor = new BABYLON.Color3(0.1, 0.1, 0.18);
+        this.scene.clearColor = new BABYLON.Color3(0.075, 0.08, 0.09);
 
         // Camera
         this.camera = new BABYLON.ArcRotateCamera(
@@ -141,8 +141,8 @@ class PrinterSimulator {
         gridMaterial.minorUnitVisibility = 0.3;
         gridMaterial.gridRatio = 10;
         gridMaterial.backFaceCulling = false;
-        gridMaterial.mainColor = new BABYLON.Color3(0.2, 0.2, 0.3);
-        gridMaterial.lineColor = new BABYLON.Color3(0.4, 0.4, 0.5);
+        gridMaterial.mainColor = new BABYLON.Color3(0.2, 0.21, 0.23);
+        gridMaterial.lineColor = new BABYLON.Color3(0.38, 0.4, 0.44);
         gridMaterial.opacity = 0.8;
         grid.material = gridMaterial;
     }
@@ -2561,8 +2561,8 @@ class PrinterSimulator {
             position: fixed;
             left: ${clientX + 10}px;
             top: ${clientY - 20}px;
-            background: linear-gradient(135deg, #2a2a3e, #1e1e2e);
-            border: 1px solid rgba(139, 92, 246, 0.5);
+            background: #1c1f26;
+            border: 1px solid #343a45;
             border-radius: 8px;
             padding: 8px 4px;
             z-index: 10000;
