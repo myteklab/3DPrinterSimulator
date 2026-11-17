@@ -38,6 +38,9 @@ class PrinterSimulator {
         this.printMaterial = null; // Reusable material for print mesh
         this.activeMaterial = null; // Cached material for active tube mesh
         this.frozenMaterial = null; // Shared material for all frozen geometry (non-rainbow)
+        this.overhangLayers = []; // {z, mesh}: walls printed over air, see setOverhangs
+        this.overhangsVisible = true;
+        this._printedZ = null;    // highest layer printed so far; null shows every overhang
         this.frameAccumulator = 0; // For handling fractional speeds
         this.lastFrameTime = 0;
         this.printHeadPosition = new BABYLON.Vector3(0, 20, 0); // Current smooth position
@@ -445,12 +448,66 @@ class PrinterSimulator {
         }
     }
 
+    // Walls printed over air, drawn as a highlight just outside the wall.
+    // Right after Slice every one shows; once printing starts each appears
+    // when the nozzle reaches its layer. runs: [{z, runs: [[[x, y], ...]]}] in
+    // G-code millimetres.
+    setOverhangs(layers, hex) {
+        this._disposeOverhangs();
+        if (!layers || !layers.length) return;
+        const color = BABYLON.Color3.FromHexString(hex);
+        const mat = new BABYLON.StandardMaterial('overhangMat', this.scene);
+        mat.diffuseColor = color;
+        mat.emissiveColor = color.scale(0.85);
+        mat.specularColor = new BABYLON.Color3(0, 0, 0);
+        this.overhangMaterial = mat;
+        const radius = this.lineThickness * 0.8; // a little proud of the wall, or it hides inside it
+        for (const layer of layers) {
+            const tubes = [];
+            for (const run of layer.runs) {
+                try {
+                    tubes.push(BABYLON.MeshBuilder.CreateTube('overhang', {
+                        path: run.map(([x, y]) => new BABYLON.Vector3(x, layer.z, y)),
+                        radius, tessellation: 6, cap: BABYLON.Mesh.CAP_ALL
+                    }, this.scene));
+                } catch (e) { /* a run of repeated points */ }
+            }
+            if (!tubes.length) continue;
+            const mesh = tubes.length === 1 ? tubes[0] : BABYLON.Mesh.MergeMeshes(tubes, true, true);
+            if (!mesh) continue;
+            mesh.material = mat;
+            mesh.renderingGroupId = 1;
+            mesh.isPickable = false;
+            this.overhangLayers.push({ z: layer.z, mesh });
+        }
+        this._updateOverhangVisibility();
+    }
+
+    setOverhangsVisible(on) {
+        this.overhangsVisible = on;
+        this._updateOverhangVisibility();
+    }
+
+    _updateOverhangVisibility() {
+        for (const o of this.overhangLayers) {
+            o.mesh.setEnabled(this.overhangsVisible && (this._printedZ === null || o.z <= this._printedZ + 1e-6));
+        }
+    }
+
+    _disposeOverhangs() {
+        for (const o of this.overhangLayers) o.mesh.dispose();
+        this.overhangLayers = [];
+        if (this.overhangMaterial) { this.overhangMaterial.dispose(); this.overhangMaterial = null; }
+    }
+
     /**
      * Clear all printed geometry
      */
     clearPrint() {
         // Clean up print interaction if active
         this.disablePrintInteraction();
+        this._printedZ = null;
+        this._updateOverhangVisibility();
 
         // Dispose active tube mesh
         if (this.lineMesh) {
@@ -835,6 +892,10 @@ class PrinterSimulator {
             command.to.z,
             command.to.y
         );
+        if (command.extruding && this.overhangLayers.length && (this._printedZ === null || to.y > this._printedZ + 1e-6)) {
+            this._printedZ = to.y;
+            this._updateOverhangVisibility();
+        }
 
         // Move gantry and print head to simulate real printer mechanics
         if (this.printHead && this.xGantry) {
@@ -910,6 +971,16 @@ class PrinterSimulator {
      * Add line segment (ULTRA FAST - single mesh approach)
      * Only called when extruding
      */
+    // Sides of the tube drawn for one printed line. Walls come through as
+    // loops of many points and are what you see, so they get round tubes:
+    // overlapping 0.2 mm apart they read as a modern print's fine ridges. With
+    // three sides every wall was a stack of triangles that caught the light in
+    // stripes. Infill comes through as two-point moves hidden inside, and stays
+    // at three sides, which keeps big prints fast.
+    tubeSides(segment) {
+        return segment.length > 2 ? 8 : 3;
+    }
+
     addLineSegment(from, to, layer) {
         // If starting a new segment (after travel move), add the starting point
         if (this.currentSegment.length === 0) {
@@ -969,9 +1040,6 @@ class PrinterSimulator {
             this.totalPointCount -= oldSegments[i].length;
         }
 
-        // OPTIMIZATION: Always use lowest tessellation for frozen geometry
-        // Users won't notice the difference on completed geometry
-        const tessellation = 3; // Triangle - simplest and fastest
         const radius = this.lineThickness / 2;
 
         // Create a CLONED material for frozen geometry to prevent color changes
@@ -999,7 +1067,7 @@ class PrinterSimulator {
             const tube = BABYLON.MeshBuilder.CreateTube(`frozen_segment_${this.frozenMeshes.length}_${i}`, {
                 path: segment,
                 radius: radius,
-                tessellation: tessellation,
+                tessellation: this.tubeSides(segment),
                 cap: BABYLON.Mesh.NO_CAP,
                 updatable: false
             }, this.scene);
@@ -1084,7 +1152,7 @@ class PrinterSimulator {
             const tube = BABYLON.MeshBuilder.CreateTube(`frozenSeg_${this.frozenMeshes.length}`, {
                 path: segment,
                 radius: radius,
-                tessellation: 3, // Triangle cross-section — fast and good enough for frozen geometry
+                tessellation: this.tubeSides(segment),
                 cap: BABYLON.Mesh.NO_CAP,
                 updatable: false
             }, this.scene);
@@ -1195,7 +1263,7 @@ class PrinterSimulator {
                 const tube = BABYLON.MeshBuilder.CreateTube(`bulk_${i}`, {
                     path: segment,
                     radius: radius,
-                    tessellation: 3,
+                    tessellation: this.tubeSides(segment),
                     cap: BABYLON.Mesh.NO_CAP,
                     updatable: false
                 }, this.scene);
@@ -1298,7 +1366,7 @@ class PrinterSimulator {
             this.lineMesh = BABYLON.MeshBuilder.CreateTube("activePrint", {
                 path: this.currentSegment,
                 radius: radius,
-                tessellation: 4,
+                tessellation: this.tubeSides(this.currentSegment),
                 cap: BABYLON.Mesh.NO_CAP,
                 updatable: false
             }, this.scene);

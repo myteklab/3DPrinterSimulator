@@ -237,6 +237,7 @@ function setupEventListeners() {
     document.getElementById('show-printhead').addEventListener('change', (e) => {
         simulator.togglePrintHead(e.target.checked);
     });
+    document.getElementById('show-overhangs').addEventListener('change', (e) => simulator.setOverhangsVisible(e.target.checked));
     document.getElementById('show-bed').addEventListener('change', (e) => {
         simulator.toggleBuildPlate(e.target.checked);
     });
@@ -1017,9 +1018,9 @@ async function sliceSTL() {
         // Load into simulator
         loadGCode(gcodeText);
 
-        updateSliceButton(false, '✅ Sliced!');
+        updateSliceButton(false, 'Sliced');
         updateSliceStatus(`Generated ${layers.length} layers`);
-        showToast(`✅ Slicing complete! ${layers.length} layers generated`, 'success', 3000);
+        
         setTimeout(() => {
             updateSliceButton(false, 'Slice');
             updateSliceStatus(`${loadedModels.length} model(s) ready to slice`);
@@ -1342,6 +1343,90 @@ M140 S0 ; Turn off bed
     loadGCode(sampleGCode);
 }
 
+// Walls printed over air. Each layer's walls come first in the slicer's
+// G-code (before "; Sparse" or "; Solid"); a stretch of wall is over air when
+// it sits more than OVERHANG_REACH outside the walls of the layer below,
+// which is steeper than the 45 degrees a printer manages on its own. Read from
+// the G-code so a reopened print shows them too, without slicing again.
+const OVERHANG_REACH = 0.25;
+function findOverhangs(gcodeText) {
+    const layers = [];
+    let layer = null, loop = null;
+    for (const raw of gcodeText.split('\n')) {
+        const line = raw.trim();
+        const head = line.match(/^; Layer \d+ \(Z=([\d.]+)\)/);
+        if (head) { layer = { z: parseFloat(head[1]), loops: [], walls: true }; layers.push(layer); loop = null; continue; }
+        if (!layer || !layer.walls) continue;
+        if (line.startsWith('; S')) { layer.walls = false; continue; }
+        const x = line.match(/X(-?[\d.]+)/), y = line.match(/Y(-?[\d.]+)/);
+        if (!x || !y) continue;
+        const pt = [parseFloat(x[1]), parseFloat(y[1])];
+        if (line.startsWith('G0') || !loop) { loop = [pt]; layer.loops.push(loop); } else loop.push(pt);
+    }
+    const inside = (p, loops) => {
+        let n = 0;
+        for (const l of loops) {
+            const [x0, y0, x1, y1] = box(l);
+            if (p[1] < y0 || p[1] > y1 || p[0] > x1) continue;
+            for (let i = 0, j = l.length - 1; i < l.length; j = i++) {
+                if ((l[i][1] > p[1]) !== (l[j][1] > p[1]) && p[0] < (l[j][0] - l[i][0]) * (p[1] - l[i][1]) / (l[j][1] - l[i][1]) + l[i][0]) n++;
+            }
+        }
+        return n % 2 === 1;
+    };
+    const boxes = new Map();
+    const box = (l) => {
+        if (!boxes.has(l)) {
+            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+            for (const [x, y] of l) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+            boxes.set(l, [x0 - OVERHANG_REACH, y0 - OVERHANG_REACH, x1 + OVERHANG_REACH, y1 + OVERHANG_REACH]);
+        }
+        return boxes.get(l);
+    };
+    const near = (p, loops) => {
+        for (const l of loops) {
+            const [x0, y0, x1, y1] = box(l);
+            if (p[0] < x0 || p[0] > x1 || p[1] < y0 || p[1] > y1) continue;
+            for (let i = 1; i < l.length; i++) {
+                const [ax, ay] = l[i - 1], [bx, by] = l[i];
+                const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+                const t = len2 ? Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / len2)) : 0;
+                if (Math.hypot(ax + t * dx - p[0], ay + t * dy - p[1]) <= OVERHANG_REACH) return true;
+            }
+        }
+        return false;
+    };
+    const out = [];
+    for (let k = 1; k < layers.length; k++) {
+        const below = layers[k - 1].loops, runs = [];
+        for (const l of layers[k].loops) {
+            let run = null;
+            for (let i = 1; i < l.length; i++) {
+                const a = l[i - 1], b = l[i];
+                const steps = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1])));
+                for (let s = 0; s < steps; s++) {
+                    const p0 = [a[0] + (b[0] - a[0]) * s / steps, a[1] + (b[1] - a[1]) * s / steps];
+                    const p1 = [a[0] + (b[0] - a[0]) * (s + 1) / steps, a[1] + (b[1] - a[1]) * (s + 1) / steps];
+                    const mid = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2];
+                    if (inside(mid, below) || near(mid, below)) { run = null; continue; }
+                    if (!run) { run = [p0]; runs.push(run); }
+                    run.push(p1);
+                }
+            }
+        }
+        if (runs.length) out.push({ z: layers[k].z, runs });
+    }
+    return out;
+}
+
+// A highlight that stands apart from the filament: blue, or pink on a blue print.
+function overhangColor() {
+    const hex = (document.getElementById('filament-color') || {}).value || '#ff6b35';
+    const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+    const bluish = b > r + 30 && b >= g - 20;
+    return bluish ? { hex: '#f472b6', name: 'pink' } : { hex: '#38bdf8', name: 'blue' };
+}
+
 /**
  * Load and parse G-code
  */
@@ -1356,6 +1441,12 @@ function loadGCode(gcodeText) {
     }
 
     simulator.loadCommands(commands);
+    const overhangs = findOverhangs(gcodeText);
+    simulator.setOverhangs(overhangs, overhangColor().hex);
+    simulator.setOverhangsVisible(document.getElementById('show-overhangs')?.checked !== false);
+    if (overhangs.length && !learningMode) {
+        showToast(`The ${overhangColor().name} parts print over air, with nothing under them. A real printer needs supports there, or a model with a flatter bottom.`, 'info', 8000);
+    }
 
     // Store totals for HUD updates
     simulator.totalLines = commands.length;
