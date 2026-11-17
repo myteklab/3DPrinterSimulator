@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3D Printer Simulator</title>
-    <link rel="stylesheet" href="css/style.css?v=18">
+    <link rel="stylesheet" href="css/style.css?v=19">
     <script src="https://cdn.jsdelivr.net/npm/babylonjs@9.37.0/babylon.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/babylonjs-materials@9.37.0/babylonjs.materials.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/babylonjs-serializers@9.37.0/babylonjs.serializers.min.js"></script>
@@ -250,7 +250,6 @@
                             <label class="swatch-custom" title="Any color"><input type="color" id="filament-color" value="#ff6b35"></label>
                         </div>
 
-                        <label class="checkbox-label"><input type="checkbox" id="show-overhangs" checked> Show overhangs <span class="unit">(parts over air)</span></label>
                         <label class="checkbox-label"><input type="checkbox" id="rainbow-mode"> Rainbow layers</label>
                         <label class="checkbox-label"><input type="checkbox" id="show-printhead" checked> Show the print head</label>
                         <label class="checkbox-label"><input type="checkbox" id="show-bed" checked> Show the build plate</label>
@@ -384,6 +383,7 @@
                                 <option value="plate">Supports from the plate</option>
                                 <option value="everywhere">Supports everywhere</option>
                             </select>
+                            <label class="inline-checkbox" title="Color the parts that print over air"><input type="checkbox" id="show-overhangs" checked> Overhangs</label>
                             <select id="dock-filament-type" class="sm" title="Filament Type">
                                 <option value="pla" selected>PLA</option>
                                 <option value="petg">PETG</option>
@@ -500,11 +500,11 @@
         </div>
     </div>
 
-    <script src="js/GCodeParser.js?v=18"></script>
-    <script src="js/GCodeGenerator.js?v=18"></script>
-    <script src="js/STLSlicer.js?v=18"></script>
-    <script src="js/PrinterSimulator.js?v=18"></script>
-    <script src="js/main.js?v=18"></script>
+    <script src="js/GCodeParser.js?v=19"></script>
+    <script src="js/GCodeGenerator.js?v=19"></script>
+    <script src="js/STLSlicer.js?v=19"></script>
+    <script src="js/PrinterSimulator.js?v=19"></script>
+    <script src="js/main.js?v=19"></script>
 
     <script>
     // Help content database
@@ -543,7 +543,7 @@
         },
         'appearance': {
             title: 'Look',
-            content: '<div class="help-section"><p><strong>Overhangs</strong> are parts of a print with nothing under them, like the bottom half of a ball. After Slice they are colored. A real printer lays that plastic onto air, so it sags or falls: real slicers add thin <strong>supports</strong> under them, or you change the model so it has a flat bottom.</p><p>Filament color, rainbow layers, showing or hiding the print head and the build plate, and the lighting. <strong>Round plastic lines</strong> draws each line as a tube, which looks more real and is slower.</p></div>'
+            content: '<div class="help-section"><p><strong>Overhangs</strong> are parts of a print with nothing under them, like the bottom half of a ball. After Slice they are colored; the <strong>Overhangs</strong> box in the slicer bar turns that off. A real printer lays that plastic onto air, so it sags or falls: real slicers add thin <strong>supports</strong> under them, or you change the model so it has a flat bottom.</p><p>Filament color, rainbow layers, showing or hiding the print head and the build plate, and the lighting. <strong>Round plastic lines</strong> draws each line as a tube, which looks more real and is slower.</p></div>'
         },
         'printer-status': {
             title: 'Printer status',
