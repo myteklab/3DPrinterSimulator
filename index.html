@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3D Printer Simulator</title>
-    <link rel="stylesheet" href="css/style.css?v=7">
+    <link rel="stylesheet" href="css/style.css?v=8">
     <script src="https://cdn.jsdelivr.net/npm/babylonjs@9.37.0/babylon.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/babylonjs-materials@9.37.0/babylonjs.materials.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/babylonjs-serializers@9.37.0/babylonjs.serializers.min.js"></script>
@@ -155,6 +155,7 @@
                 <div id="file-section" class="collapsible-content show">
                     <input type="file" id="stl-file" accept=".stl" class="file-input">
                     <label for="stl-file" class="file-label">&#x1F4E6; Add STL to Build Plate</label>
+                    <button id="asset-stl-btn" class="btn btn-secondary" style="width: 100%; margin-top: 8px;" hidden>&#x1F4C2; Add STL from My Files</button>
 
                     <div style="margin: 10px 0;">
                         <input type="text" id="stl-url" placeholder="https://example.com/model.stl"
@@ -533,11 +534,11 @@
         </div>
     </div>
 
-    <script src="js/GCodeParser.js?v=7"></script>
-    <script src="js/GCodeGenerator.js?v=7"></script>
-    <script src="js/STLSlicer.js?v=7"></script>
-    <script src="js/PrinterSimulator.js?v=7"></script>
-    <script src="js/main.js?v=7"></script>
+    <script src="js/GCodeParser.js?v=8"></script>
+    <script src="js/GCodeGenerator.js?v=8"></script>
+    <script src="js/STLSlicer.js?v=8"></script>
+    <script src="js/PrinterSimulator.js?v=8"></script>
+    <script src="js/main.js?v=8"></script>
 
     <script>
     // Help content database
@@ -564,7 +565,7 @@
         },
         'stl': {
             title: 'STL files',
-            content: '<div class="help-section"><h3>What is an STL file?</h3><p>An STL file describes the outside of an object as thousands of tiny triangles. It has no colors and no units: most programs mean millimeters, so a model drawn in meters or inches can arrive tiny or huge. This app scales those to a printable size.</p><p>Make your own in a 3D design app and export it as STL, then use <strong>Add STL</strong>. <strong>Load STL from URL</strong> needs a direct link to the .stl file itself; many model sites do not allow that, so download the file first.</p></div>'
+            content: '<div class="help-section"><h3>What is an STL file?</h3><p>An STL file describes the outside of an object as thousands of tiny triangles. It has no colors and no units: most programs mean millimeters, so a model drawn in meters or inches can arrive tiny or huge. This app scales those to a printable size.</p><p>Make your own in a 3D design app and export it as STL, then use <strong>Add STL</strong>, or save it to your files and use <strong>Add STL from My Files</strong>. <strong>Load STL from URL</strong> needs a direct link to the .stl file itself; many model sites do not allow that, so download the file first.</p></div>'
         },
         'buildplate': {
             title: 'Build plate',

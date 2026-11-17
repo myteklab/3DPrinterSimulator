@@ -1726,3 +1726,5 @@ body:not(.standard-mode):not(.learning-mode) [data-mode="standard"] {
     font-size: 18px;
     cursor: pointer;
 }
+
+#asset-stl-btn[hidden] { display: none; }

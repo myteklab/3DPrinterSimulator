@@ -166,6 +166,8 @@ function setupEventListeners() {
     const loadSampleEl = document.getElementById('load-sample');
     if (loadSampleEl) loadSampleEl.addEventListener('click', loadSampleGCode);
     document.getElementById('load-url-btn').addEventListener('click', loadSTLFromURL);
+    // The platform adapter unhides this and opens the picker; outside the platform it stays hidden.
+    document.getElementById('asset-stl-btn').addEventListener('click', () => window.dispatchEvent(new CustomEvent('printersim:pickAsset')));
 
     // Slice settings (with null checks for elements that may be in dock instead)
     const qualityPreset = document.getElementById('dock-quality-preset');
@@ -668,8 +670,11 @@ function checkURLParameters() {
 /**
  * Core function to load STL from URL
  */
-async function loadSTLFromURLCore(url) {
-    const loadBtn = document.getElementById('load-url-btn');
+// opts.name: a picked file arrives as /a/{id}, which carries no filename.
+// opts.keepUrl false stores the geometry instead, the way an uploaded STL is,
+// so the project still opens if the file is later deleted or renamed.
+async function loadSTLFromURLCore(url, opts = {}) {
+    const loadBtn = opts.button || document.getElementById('load-url-btn');
     const originalText = loadBtn.textContent;
 
     try {
@@ -685,9 +690,11 @@ async function loadSTLFromURLCore(url) {
         }
 
         // Get filename from URL or Content-Disposition header
-        let filename = 'model.stl';
+        let filename = opts.name || 'model.stl';
         const contentDisposition = response.headers.get('Content-Disposition');
-        if (contentDisposition) {
+        if (opts.name) {
+            // named by the caller
+        } else if (contentDisposition) {
             const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
             if (filenameMatch) {
                 filename = filenameMatch[1];
@@ -728,7 +735,7 @@ async function loadSTLFromURLCore(url) {
             scale: { x: 1, y: 1, z: 1 },
             boundingBox: bbox,
             triangleCount: triangleCount,
-            url: url  // Store URL so we can save/reload
+            url: opts.keepUrl === false ? null : url
         };
 
         // Add to loaded models
@@ -767,7 +774,8 @@ async function loadSTLFromURLCore(url) {
         console.error('Error loading STL from URL:', error);
         // "Failed to fetch" is what a browser says for a dead link and for a site that refuses
         // to share its files with other sites alike
-        const why = /Failed to fetch|NetworkError|Load failed/i.test(error.message)
+        const why = opts.name ? `Could not load "${opts.name}": ${error.message}`
+            : /Failed to fetch|NetworkError|Load failed/i.test(error.message)
             ? 'Could not download that file. Check the link, and use a direct link to the .stl file itself. Some sites (Thingiverse, Printables) do not let other sites download their files, so download it to your computer and use Add STL instead.'
             : `Could not load that STL: ${error.message}`;
         showToast(why, 'error', 8000);
@@ -782,6 +790,18 @@ async function loadSTLFromURLCore(url) {
  * Mirrors loadSTLFromURLCore but skips the fetch since the geometry
  * is already in hand. Used by loadProjectData when modelData has no url.
  */
+// Called with the file a student picked from My Files. The picker offers every
+// 3D model, and the slicer reads only STL.
+window.loadSTLFromAsset = function (url, name) {
+    name = name || 'model.stl';
+    if (!/\.stl$/i.test(name)) {
+        const ext = (name.match(/\.([a-z0-9]+)$/i) || [])[1];
+        showToast((ext ? `"${name}" is a .${ext.toLowerCase()} file. ` : '') + 'The printer reads .stl files: pick an STL, or export one from your 3D design app.', 'error', 8000);
+        return Promise.resolve();
+    }
+    return loadSTLFromURLCore(url, { name, keepUrl: false, button: document.getElementById('asset-stl-btn') });
+};
+
 async function loadSTLFromTextCore(stlText, name) {
     try {
         const tempSlicer = new STLSlicer();
