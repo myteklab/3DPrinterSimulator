@@ -205,8 +205,11 @@ class STLSlicer {
             ];
 
             for (const [va, vb] of edges) {
-                // Check if edge crosses the z plane
-                if ((va.z <= z && vb.z >= z) || (va.z >= z && vb.z <= z)) {
+                // A point exactly on the plane counts as above it. With <= on both
+                // sides it was counted by both edges that meet there, and CAD models
+                // put points on round heights: the BlocksCAD turkey's body lost its
+                // whole infill at z = 15 that way.
+                if ((va.z < z) !== (vb.z < z)) {
                     if (Math.abs(va.z - vb.z) > 0.0001) { // Avoid division by zero
                         const t = (z - va.z) / (vb.z - va.z);
                         const intersection = {
@@ -219,7 +222,8 @@ class STLSlicer {
             }
 
             // If we have exactly 2 intersections, we have a line segment
-            if (intersections.length === 2) {
+            if (intersections.length === 2 &&
+                Math.hypot(intersections[0].x - intersections[1].x, intersections[0].y - intersections[1].y) > 1e-6) {
                 segments.push({
                     start: intersections[0],
                     end: intersections[1]
@@ -496,6 +500,7 @@ class STLSlicer {
         gcode.push('');
 
         let extrusionCounter = 0;
+        const allPaths = layers.map(layer => this.segmentsToPerimeter(layer.segments));
 
         // Process each layer using provided sequences
         for (let i = 0; i < layers.length; i++) {
@@ -503,15 +508,9 @@ class STLSlicer {
             gcode.push(`; Layer ${layer.layerNum + 1} (Z=${layer.z.toFixed(3)})`);
             gcode.push(`G1 Z${layer.z.toFixed(3)} F5000`);
 
-            // Generate perimeters from segments
-            const paths = this.segmentsToPerimeter(layer.segments);
+            const paths = allPaths[i];
 
             if (paths.length > 0) {
-                // Use provided sequences for this layer
-                const isBottomLayer = sequences[i].isBottom;
-                const isTopLayer = sequences[i].isTop;
-                const isSolidLayer = isBottomLayer || isTopLayer;
-
                 // Draw all perimeter paths
                 for (let pathIdx = 0; pathIdx < paths.length; pathIdx++) {
                     const path = paths[pathIdx];
@@ -536,29 +535,8 @@ class STLSlicer {
                 const allPoints = paths.flat();
                 const bbox = this.getLayerBoundingBox(allPoints);
 
-                if (isSolidLayer) {
-                    // Solid infill
-                    gcode.push(`; Solid layer ${isBottomLayer ? '(bottom)' : '(top)'}`);
-                    const solidInfill1 = this.generateLayerInfill(bbox, 'lines', 100, paths, 0);
-                    for (const line of solidInfill1) {
-                        gcode.push(line.replace(/E\d+/g, match => `E${extrusionCounter += 3}`));
-                    }
-                    const solidInfill2 = this.generateLayerInfill(bbox, 'lines', 100, paths, 90);
-                    for (const line of solidInfill2) {
-                        gcode.push(line.replace(/E\d+/g, match => `E${extrusionCounter += 3}`));
-                    }
-                } else {
-                    // Sparse infill
-                    if (infillDensity > 0) {
-                        gcode.push(`; Sparse infill (${infillDensity}%)`);
-                        const passes = infillPattern === 'grid' ? [0, 90] : [0];
-                        for (const angle of passes) {
-                            const infillLines = this.generateLayerInfill(bbox, infillPattern, infillDensity, paths, angle, passes.length);
-                            for (const line of infillLines) {
-                                gcode.push(line.replace(/E\d+/g, match => `E${extrusionCounter += 3}`));
-                            }
-                        }
-                    }
+                for (const line of this.layerInfillLines(i, allPaths, bbox, infillPattern, infillDensity)) {
+                    gcode.push(line.replace(/E\d+/g, () => `E${extrusionCounter += 3}`));
                 }
             }
         }
@@ -597,9 +575,7 @@ class STLSlicer {
 
         let extrusionCounter = 0;
 
-        // OPTIMIZATION: Pre-analyze layers to find continuous sequences
-        // This handles multiple models with different heights correctly
-        const layerSequences = this.analyzeLayerSequences(layers);
+        const allPaths = layers.map(layer => this.segmentsToPerimeter(layer.segments));
 
         // Process each layer
         for (let i = 0; i < layers.length; i++) {
@@ -608,15 +584,9 @@ class STLSlicer {
             gcode.push(`G1 Z${layer.z.toFixed(3)} F5000`);
 
             // Generate perimeters from segments (returns array of paths)
-            const paths = this.segmentsToPerimeter(layer.segments);
+            const paths = allPaths[i];
 
             if (paths.length > 0) {
-                // Determine if this layer should have solid infill based on LOCAL layer sequences
-                // This fixes the bug where shorter models don't get top solid layers
-                const isBottomLayer = layerSequences[i].isBottom;
-                const isTopLayer = layerSequences[i].isTop;
-                const isSolidLayer = isBottomLayer || isTopLayer;
-
                 // Draw all perimeter paths (separate shapes like letters A, B, C)
                 for (let pathIdx = 0; pathIdx < paths.length; pathIdx++) {
                     const path = paths[pathIdx];
@@ -647,56 +617,8 @@ class STLSlicer {
                 const allPoints = paths.flat();
                 const bbox = this.getLayerBoundingBox(allPoints);
 
-                if (isSolidLayer) {
-                    // Solid infill for top/bottom layers (100% density)
-                    // Use alternating angles (0° and 90°) to catch all geometry including curves
-                    gcode.push(`; Solid layer ${isBottomLayer ? '(bottom)' : '(top)'}`);
-
-                    // First direction: horizontal lines (0°)
-                    const solidInfill1 = this.generateLayerInfill(bbox, 'lines', 100, paths, 0);
-                    for (const line of solidInfill1) {
-                        gcode.push(line.replace(/E\d+/g, match => {
-                            return `E${extrusionCounter += 3}`;
-                        }));
-                    }
-
-                    // Second direction: vertical lines (90°) to fill gaps in curves
-                    const solidInfill2 = this.generateLayerInfill(bbox, 'lines', 100, paths, 90);
-                    for (const line of solidInfill2) {
-                        gcode.push(line.replace(/E\d+/g, match => {
-                            return `E${extrusionCounter += 3}`;
-                        }));
-                    }
-                } else {
-                    // Sparse infill for middle layers
-                    if (infillDensity > 0) {
-                        gcode.push(`; Sparse infill (${infillDensity}%)`);
-
-                        if (infillPattern === 'grid') {
-                            // Grid pattern: lines in both directions (0° and 90°)
-                            const infill1 = this.generateLayerInfill(bbox, 'lines', infillDensity, paths, 0, 2);
-                            for (const line of infill1) {
-                                gcode.push(line.replace(/E\d+/g, match => {
-                                    return `E${extrusionCounter += 3}`;
-                                }));
-                            }
-
-                            const infill2 = this.generateLayerInfill(bbox, 'lines', infillDensity, paths, 90, 2);
-                            for (const line of infill2) {
-                                gcode.push(line.replace(/E\d+/g, match => {
-                                    return `E${extrusionCounter += 3}`;
-                                }));
-                            }
-                        } else {
-                            // Other patterns: single direction
-                            const infill = this.generateLayerInfill(bbox, infillPattern, infillDensity, paths, 0);
-                            for (const line of infill) {
-                                gcode.push(line.replace(/E\d+/g, match => {
-                                    return `E${extrusionCounter += 3}`;
-                                }));
-                            }
-                        }
-                    }
+                for (const line of this.layerInfillLines(i, allPaths, bbox, infillPattern, infillDensity)) {
+                    gcode.push(line.replace(/E\d+/g, () => `E${extrusionCounter += 3}`));
                 }
             }
 
@@ -789,6 +711,97 @@ class STLSlicer {
         }
 
         return { minX, minY, maxX, maxY };
+    }
+
+    // Infill for layer i: the sparse pattern everywhere, then solid lines only
+    // where this layer becomes a surface, a spot with no plastic in one of the
+    // topBottomLayers layers above (a top) or below (a bottom). It used to be
+    // whole layers: any layer whose outline shrank 10% was a "top", so the
+    // upper half of anything round printed solid. A real slicer works per spot,
+    // so a dome gets a thin skin and keeps its infill inside.
+    layerInfillLines(i, allPaths, bbox, infillPattern, infillDensity) {
+        const out = [];
+        const paths = allPaths[i];
+        if (infillDensity > 0) {
+            out.push(`; Sparse infill (${infillDensity}%)`);
+            const passes = infillPattern === 'grid' ? [0, 90] : [0];
+            for (const angle of passes) out.push(...this.generateLayerInfill(bbox, infillPattern, infillDensity, paths, angle, passes.length));
+        }
+        const n = this.topBottomLayers;
+        const neighbours = [];
+        for (let k = 1; k <= n; k++) {
+            neighbours.push(i + k < allPaths.length ? allPaths[i + k] : null);
+            neighbours.push(i - k >= 0 ? allPaths[i - k] : null);
+        }
+        const spacing = this.nozzleDiameter * 0.875;
+        const minPiece = this.nozzleDiameter * 1.5;
+        const inset = 0.2;
+        let first = true;
+        for (const vertical of [false, true]) {
+            const lo = (vertical ? bbox.minX : bbox.minY) + inset;
+            const hi = (vertical ? bbox.maxX : bbox.maxY) - inset;
+            for (let c = lo, row = 0; c <= hi + 0.01; c += spacing, row++) {
+                let exposed = this.insideIntervals(paths, c, vertical);
+                if (!exposed.length) continue;
+                let covered = exposed;
+                for (const nb of neighbours) {
+                    covered = nb ? this.intersectIntervals(covered, this.insideIntervals(nb, c, vertical)) : [];
+                    if (!covered.length) break;
+                }
+                exposed = this.subtractIntervals(exposed, covered);
+                for (const [a0, b0] of exposed) {
+                    if (b0 - a0 < minPiece) continue;
+                    if (first) { out.push('; Solid surface'); first = false; }
+                    const [s0, e0] = row % 2 === 0 ? [a0, b0] : [b0, a0];
+                    if (vertical) {
+                        out.push(`G0 X${c.toFixed(3)} Y${s0.toFixed(3)}`);
+                        out.push(`G1 X${c.toFixed(3)} Y${e0.toFixed(3)} E0 F1500`);
+                    } else {
+                        out.push(`G0 X${s0.toFixed(3)} Y${c.toFixed(3)}`);
+                        out.push(`G1 X${e0.toFixed(3)} Y${c.toFixed(3)} E0 F1500`);
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    // Where a scanline at c (y = c, or x = c when vertical) is inside the
+    // layer's plastic, as sorted [from, to] pairs. Even-odd, so holes stay holes.
+    insideIntervals(paths, c, vertical) {
+        const xs = [];
+        for (const path of paths) {
+            xs.push(...(vertical ? this.findVerticalLinePolygonIntersections(c, path) : this.findLinePolygonIntersections(c, path)));
+        }
+        xs.sort((a, b) => a - b);
+        const out = [];
+        for (let k = 0; k + 1 < xs.length; k += 2) out.push([xs[k], xs[k + 1]]);
+        return out;
+    }
+
+    intersectIntervals(a, b) {
+        const out = [];
+        let i = 0, j = 0;
+        while (i < a.length && j < b.length) {
+            const lo = Math.max(a[i][0], b[j][0]), hi = Math.min(a[i][1], b[j][1]);
+            if (hi > lo) out.push([lo, hi]);
+            if (a[i][1] < b[j][1]) i++; else j++;
+        }
+        return out;
+    }
+
+    subtractIntervals(a, b) {
+        const out = [];
+        for (const [lo0, hi] of a) {
+            let lo = lo0;
+            for (const [blo, bhi] of b) {
+                if (bhi <= lo || blo >= hi) continue;
+                if (blo > lo) out.push([lo, blo]);
+                lo = Math.max(lo, bhi);
+            }
+            if (hi > lo) out.push([lo, hi]);
+        }
+        return out;
     }
 
     /**
