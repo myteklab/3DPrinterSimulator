@@ -415,6 +415,13 @@ function layerOf(i) {
 }
 
 function afterStep() {
+    simulator.currentHotendTemp = simulator.targetHotendTemp;
+    simulator.currentBedTemp = simulator.targetBedTemp;
+    const tempEl = document.getElementById('hud-temp');
+    if (tempEl) tempEl.textContent = `${simulator.currentHotendTemp}°C`;
+    const bedEl = document.getElementById('hud-bed-temp');
+    if (bedEl) bedEl.textContent = `${simulator.currentBedTemp}°C`;
+    setGhosts(false, false);
     const i = simulator.currentCommandIndex;
     const cmd = simulator.commands[i - 1] || {};
     updateProgress({
@@ -429,8 +436,31 @@ function afterStep() {
     showLayerInfo(cmd.layer || 0);
 }
 
+function formatSpeed(v) {
+    return v.toFixed(v < 1 ? 2 : (v < 10 ? 1 : 0));
+}
+
+function applySpeed(v) {
+    v = parseFloat(v);
+    if (!(v > 0)) return;
+    const slider = document.getElementById('speed-slider');
+    if (slider) slider.value = v;
+    const label = document.getElementById('speed-value');
+    if (label) label.textContent = formatSpeed(v);
+    simulator.setSpeed(v);
+}
+
+function sliderSpeed() {
+    return parseFloat((document.getElementById('speed-slider') || {}).value) || 1;
+}
+
 function stopPlayingForStep() {
     if (simulator.isPlaying) simulator.pause();
+    // a heat-up still running would start the old print once it finished, even after a new Slice
+    if (simulator.isHeating) {
+        clearInterval(simulator.heatupInterval);
+        simulator.isHeating = false;
+    }
     const learnPlay = document.getElementById('learn-play-btn');
     if (learnPlay) learnPlay.textContent = '\u25B6 Play';
     const playBtn = document.getElementById('play-btn');
@@ -474,7 +504,10 @@ function stepBack() {
 }
 
 /** One line under Previous and Next on what the layer just printed is. */
+let shownLayer = 0;
+
 function showLayerInfo(layer) {
+    shownLayer = layer;
     const el = document.getElementById('learn-layer-info');
     if (!el) return;
     const total = simulator.totalLayers || 0;
@@ -791,6 +824,7 @@ async function loadSTLFromTextCore(stlText, name) {
  */
 async function sliceSTL() {
     showStarterHint(false);
+    stopPlayingForStep();
     if (loadedModels.length === 0) {
         showToast('Please load at least one STL model first!', 'error', 3000);
         return;
@@ -984,13 +1018,8 @@ async function sliceSTL() {
 
         console.log(`Slicing complete! Generated ${layers.length} layers from ${loadedModels.length} model(s)`);
 
-        // Hide ghost previews and detach gizmos after slicing
-        loadedModels.forEach(model => {
-            if (model.previewMesh) {
-                model.previewMesh.setEnabled(false);
-                model.previewMesh.isPickable = false; // Disable picking during print
-            }
-        });
+        // The model stays on show after Slice (it vanished until Print before); the print hides it
+        setGhosts(true, false);
 
         // Detach gizmos during print
         if (gizmoManager) {
@@ -1396,6 +1425,7 @@ function playSimulation() {
         return;
     }
 
+    simulator.setSpeed(sliderSpeed());
     const playBtn = document.getElementById('play-btn');
     const quickPrintEl = document.getElementById('quick-print');
     const quickPrintMode = quickPrintEl ? quickPrintEl.checked : false;
@@ -1431,6 +1461,7 @@ function playSimulation() {
         playBtn.innerHTML = '🔥 Heating...';
 
         // Start heat-up simulation
+        setGhosts(false, false);
         simulator.startHeatup(() => {
             // Heat-up complete, start printing
             playBtn.innerHTML = '▶ Print';
@@ -1515,6 +1546,11 @@ function updateProgress(progress) {
         percent: percent
     });
 
+    if (learningMode && progress.layer && progress.layer !== shownLayer) {
+        shownLayer = progress.layer;
+        showLayerInfo(progress.layer);
+    }
+
     // Update G-code highlighting (only if live tracking is enabled)
     const liveTracking = document.getElementById('live-gcode-tracking');
     if (!stepMode && liveTracking && liveTracking.checked) {
@@ -1542,7 +1578,7 @@ function onPrintComplete() {
     if (!restoringPrint) markUnsavedChanges();
 
     // Show completion toast
-    showToast('Print simulation complete!', 'success');
+    showToast('Print simulation complete!', 'success', 3000);
 
     // Auto-save screenshot for preview (after a short delay for final render)
     setTimeout(() => {
@@ -2830,7 +2866,7 @@ function loadProjectData(data) {
     }
     if (settings.speed) {
         setElementValue('speed-slider', settings.speed);
-        setElementText('speed-value', settings.speed);
+        setElementText('speed-value', formatSpeed(Number(settings.speed)));
         if (simulator) simulator.setSpeed(settings.speed);
     }
     if (settings.learn) {
@@ -2970,6 +3006,14 @@ window.addEventListener('beforeunload', function(e) {
 // ============================================================================
 
 let learningMode = false;  // Default to standard mode
+
+function setGhosts(visible, pickable) {
+    loadedModels.forEach(model => {
+        if (!model.previewMesh) return;
+        model.previewMesh.setEnabled(visible);
+        model.previewMesh.isPickable = !!pickable;
+    });
+}
 let restoringPrint = false;
 
 /**
@@ -2991,10 +3035,14 @@ function setMode(isLearning) {
     document.getElementById('learning-mode-btn').classList.toggle('active', isLearning);
     document.getElementById('standard-mode-btn').classList.toggle('active', !isLearning);
 
+    if (simulator) stopPlayingForStep();
     if (isLearning) {
         const learnStepMode = document.getElementById('learn-step-mode');
         stepMode = !!(learnStepMode && learnStepMode.checked);
+        if (simulator) applySpeed((document.getElementById('learn-speed') || {}).value || 5);
     }
+    // the Standard house's outline stayed drawn over Learning prints
+    setGhosts(!isLearning, !isLearning);
     showStarterHint(starterOnPlate);
 
     // Update G-code annotations display
@@ -3100,10 +3148,7 @@ function toggleLearnStepMode(enabled) {
  * Set Learning Mode playback speed
  */
 function setLearnSpeed(speed) {
-    const speedValue = parseFloat(speed);
-    if (simulator) {
-        simulator.setSpeed(speedValue);
-    }
+    if (simulator) applySpeed(speed);
 }
 
 /**
@@ -3123,7 +3168,7 @@ function playLearningMode() {
         playBtn.textContent = '▶ Play';
     } else {
         playBtn.textContent = '⏸ Pause';
-        simulator.setSpeed(parseFloat((document.getElementById('learn-speed') || {}).value || 5));
+        simulator.setSpeed(sliderSpeed());
         simulator.play();
     }
 }
@@ -3164,8 +3209,6 @@ function generateLearningShape() {
     if (dockDensity) dockDensity.value = infillDensity;
     const dockDensityValue = document.getElementById('dock-infill-density-value');
     if (dockDensityValue) dockDensityValue.textContent = infillDensity;
-    simulator.setSpeed(parseFloat((document.getElementById('learn-speed') || {}).value || 5));
-
     const stepEl = document.getElementById('learn-step-mode');
     stepMode = !!(stepEl && stepEl.checked);
     updateStepControls();
@@ -3466,10 +3509,11 @@ function applyLightingPreset(preset) {
             detailLevel = 50;
             break;
         case 'soft':
-            // above about 0.7 the ground light matches the main light and the part loses its shading
-            brightness = 70;
-            shadowSoftness = 60;
-            detailLevel = 50;
+            // The filament color is the material's diffuse and emissive color at once, so a bright
+            // ground light saturates it on every face. Kept near Layers, which shades well.
+            brightness = 65;
+            shadowSoftness = 40;
+            detailLevel = 55;
             break;
         case 'studio':
             brightness = 100;
@@ -3483,8 +3527,8 @@ function applyLightingPreset(preset) {
             break;
         case 'flat':
             brightness = 60;
-            shadowSoftness = 70;
-            detailLevel = 40;
+            shadowSoftness = 45;
+            detailLevel = 45;
             break;
         default:
             brightness = 60;
