@@ -1,0 +1,114 @@
+solid House
+  facet normal 0 0 1
+    outer loop
+      vertex -15 0 -12
+      vertex 15 18 -12
+      vertex 15 0 -12
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex -15 0 12
+      vertex 15 0 12
+      vertex 15 18 12
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex -15 0 -12
+      vertex 0 33 -12
+      vertex 15 18 -12
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex -15 0 12
+      vertex 15 18 12
+      vertex 0 33 12
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex -15 0 -12
+      vertex -15 18 -12
+      vertex 0 33 -12
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex -15 0 12
+      vertex 0 33 12
+      vertex -15 18 12
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex -15 0 -12
+      vertex 15 0 -12
+      vertex 15 0 12
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex -15 0 -12
+      vertex 15 0 12
+      vertex -15 0 12
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex 15 0 -12
+      vertex 15 18 -12
+      vertex 15 18 12
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex 15 0 -12
+      vertex 15 18 12
+      vertex 15 0 12
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex 15 18 -12
+      vertex 0 33 -12
+      vertex 0 33 12
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex 15 18 -12
+      vertex 0 33 12
+      vertex 15 18 12
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex 0 33 -12
+      vertex -15 18 -12
+      vertex -15 18 12
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex 0 33 -12
+      vertex -15 18 12
+      vertex 0 33 12
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex -15 18 -12
+      vertex -15 0 -12
+      vertex -15 0 12
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex -15 18 -12
+      vertex -15 0 12
+      vertex -15 18 12
+    endloop
+  endfacet
+endsolid House

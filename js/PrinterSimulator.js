@@ -90,7 +90,10 @@ class PrinterSimulator {
             this.scene
         );
         this.camera.attachControl(this.canvas, true);
-        this.camera.wheelPrecision = 2; // IMPROVED: Much faster zoom (was 5, now 2)
+        this.camera.wheelPrecision = 2;
+        // A trackpad sends many small wheel events; a fixed step per event made zoom jump.
+        // A share of the distance per event is smooth on both a trackpad and a mouse wheel.
+        this.camera.wheelDeltaPercentage = 0.01;
         this.camera.lowerRadiusLimit = 20;
         this.camera.upperRadiusLimit = 500;
 

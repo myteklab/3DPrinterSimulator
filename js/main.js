@@ -50,10 +50,54 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 100);
 
     // Check for URL parameters to auto-load STL
-    checkURLParameters();
+    const hasStlParam = checkURLParameters();
+
+    // A new project used to open on an empty plate with Slice greyed out. It opens on the same
+    // little house /try shows; a saved project or a /try seed replaces it when it arrives.
+    if (!hasStlParam) setTimeout(loadStarter, 400);
 
     console.log('3D Printer Simulator initialized');
 });
+
+let starterOnPlate = false;
+let projectLoaded = false;
+
+async function loadStarter() {
+    if (projectLoaded || loadedModels.length) return;
+    try {
+        const res = await fetch('samples/house.stl');
+        if (!res.ok) return;
+        const text = await res.text();
+        if (projectLoaded || loadedModels.length) return;
+        const model = await loadSTLFromTextCore(text, 'Little house');
+        if (!model) return;
+        starterOnPlate = true;
+        selectModel(model.id);
+        showStarterHint(true);
+    } catch (e) {
+        console.warn('Starter model not loaded:', e);
+    }
+}
+
+function clearStarter() {
+    if (!starterOnPlate) return;
+    starterOnPlate = false;
+    loadedModels.slice().forEach(m => removeModel(m.id, true));
+    showStarterHint(false);
+}
+
+function showStarterHint(on) {
+    const el = document.getElementById('starter-hint');
+    if (el) el.hidden = !on || learningMode;
+}
+
+// Only the plastic not yet laid down can change color, as on a real printer
+function pickFilamentColor(hex) {
+    simulator.setFilamentColor(hex);
+    if (simulator.lockedPrintColor && simulator.commands && simulator.commands.length) {
+        showToast('The new color loads for the next print. A printer cannot recolor plastic it has already laid down.', 'info', 4000);
+    }
+}
 
 /**
  * Show status toast notification
@@ -124,7 +168,7 @@ function setupEventListeners() {
     document.getElementById('load-url-btn').addEventListener('click', loadSTLFromURL);
 
     // Slice settings (with null checks for elements that may be in dock instead)
-    const qualityPreset = document.getElementById('quality-preset');
+    const qualityPreset = document.getElementById('dock-quality-preset');
     if (qualityPreset) {
         qualityPreset.addEventListener('change', (e) => {
             handleQualityPreset(e);
@@ -219,7 +263,7 @@ function setupEventListeners() {
     if (filamentColorEl) {
         filamentColorEl.addEventListener('input', (e) => {
             const hex = e.target.value;
-            simulator.setFilamentColor(hex);
+            pickFilamentColor(hex);
             console.log(`Filament color: ${hex}`);
         });
     }
@@ -230,7 +274,7 @@ function setupEventListeners() {
             const hex = e.target.value;
             const colorInput = document.getElementById('filament-color');
             if (colorInput) colorInput.value = hex;
-            simulator.setFilamentColor(hex);
+            pickFilamentColor(hex);
             console.log(`Color preset selected: ${hex}`);
         });
     }
@@ -354,103 +398,111 @@ function toggleGCodePanel() {
  */
 function updateStepControls() {
     const hasGCode = simulator.commands && simulator.commands.length > 0;
-    const stepForwardBtn = document.getElementById('step-forward-btn');
-    const stepBackBtn = document.getElementById('step-back-btn');
-    if (stepForwardBtn) {
-        stepForwardBtn.disabled = !stepMode || !hasGCode;
-    }
-    if (stepBackBtn) {
-        stepBackBtn.disabled = !stepMode || !hasGCode || simulator.currentCommandIndex === 0;
-    }
+    const at = simulator.currentCommandIndex || 0;
+    ['step-forward-btn', 'learn-next-layer'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = !hasGCode || at >= simulator.commands.length;
+    });
+    ['step-back-btn', 'learn-prev-layer'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = !hasGCode || at === 0;
+    });
+}
+
+function layerOf(i) {
+    const cmd = simulator.commands[i];
+    return cmd && cmd.layer ? cmd.layer : 0;
+}
+
+function afterStep() {
+    const i = simulator.currentCommandIndex;
+    const cmd = simulator.commands[i - 1] || {};
+    updateProgress({
+        commandIndex: i,
+        totalCommands: simulator.commands.length,
+        layer: cmd.layer || 0,
+        position: cmd.to || { x: 0, y: 0, z: 0 },
+        extruding: cmd.extruding || false
+    });
+    updateGCodeHighlight(i - 1);
+    updateStepControls();
+    showLayerInfo(cmd.layer || 0);
+}
+
+function stopPlayingForStep() {
+    if (simulator.isPlaying) simulator.pause();
+    const learnPlay = document.getElementById('learn-play-btn');
+    if (learnPlay) learnPlay.textContent = '\u25B6 Play';
+    const playBtn = document.getElementById('play-btn');
+    if (playBtn) { playBtn.disabled = false; playBtn.innerHTML = '\u25B6 Print'; }
+    const pauseBtn = document.getElementById('pause-btn');
+    if (pauseBtn) pauseBtn.disabled = true;
 }
 
 /**
- * Step forward one command
+ * Next: finish the layer the nozzle is on (setup moves count as part of layer 1).
+ * It stepped one G-code line before, which looked like nothing happened.
  */
 function stepForward() {
-    if (!stepMode || !simulator.commands || simulator.currentCommandIndex >= simulator.commands.length) {
-        return;
+    if (!simulator.commands || simulator.currentCommandIndex >= simulator.commands.length) return;
+    stopPlayingForStep();
+    let i = simulator.currentCommandIndex;
+    const target = Math.max(1, layerOf(i));
+    while (i < simulator.commands.length && layerOf(i) <= target) {
+        simulator.executeCommand(simulator.commands[i]);
+        i++;
     }
-
-    simulator.pause();
-    simulator.executeCommand(simulator.commands[simulator.currentCommandIndex]);
-    simulator.currentCommandIndex++;
-
-    // Update progress
-    const cmd = simulator.commands[simulator.currentCommandIndex - 1] || {};
-    updateProgress({
-        commandIndex: simulator.currentCommandIndex,
-        totalCommands: simulator.commands.length,
-        layer: cmd.layer || 0,
-        position: cmd.to || { x: 0, y: 0, z: 0 },
-        extruding: cmd.extruding || false
-    });
-
-    updateGCodeHighlight(simulator.currentCommandIndex - 1);
-    updateStepControls();
+    simulator.currentCommandIndex = i;
+    afterStep();
 }
 
-/**
- * Step back one command
- */
+/** Previous: back to the end of the layer below. */
 function stepBack() {
-    if (!stepMode || simulator.currentCommandIndex <= 0) {
-        return;
-    }
-
-    // Reset and replay up to one step before
-    const targetIndex = simulator.currentCommandIndex - 1;
+    if (!simulator.commands || simulator.currentCommandIndex <= 0) return;
+    stopPlayingForStep();
+    const target = layerOf(simulator.currentCommandIndex - 1) - 1;
     simulator.reset();
-
-    for (let i = 0; i < targetIndex; i++) {
-        simulator.executeCommand(simulator.commands[i]);
+    let i = 0;
+    if (target >= 1) {
+        while (i < simulator.commands.length && layerOf(i) <= target) {
+            simulator.executeCommand(simulator.commands[i]);
+            i++;
+        }
     }
+    simulator.currentCommandIndex = i;
+    afterStep();
+}
 
-    simulator.currentCommandIndex = targetIndex;
-
-    // Update progress
-    const cmd = simulator.commands[simulator.currentCommandIndex - 1] || {};
-    updateProgress({
-        commandIndex: simulator.currentCommandIndex,
-        totalCommands: simulator.commands.length,
-        layer: cmd.layer || 0,
-        position: cmd.to || { x: 0, y: 0, z: 0 },
-        extruding: cmd.extruding || false
-    });
-
-    updateGCodeHighlight(simulator.currentCommandIndex - 1);
-    updateStepControls();
+/** One line under Previous and Next on what the layer just printed is. */
+function showLayerInfo(layer) {
+    const el = document.getElementById('learn-layer-info');
+    if (!el) return;
+    const total = simulator.totalLayers || 0;
+    if (!layer) { el.textContent = 'Press Next to print the first layer.'; return; }
+    const shells = 3;
+    const shape = (document.getElementById('shape-type') || {}).value;
+    let what;
+    if (layer <= shells) what = 'A solid layer: the bottom is filled in completely so the part has a floor.';
+    else if (shape !== 'pyramid' && layer > total - shells) what = 'A solid layer: the top is filled in so the part has a roof, hiding the infill below.';
+    else what = 'The nozzle draws the wall around the edge, then the infill pattern inside. Most of the inside is air.';
+    el.textContent = `Layer ${layer} of ${total}, ${(layer * 0.2).toFixed(1)} mm up. ${what}`;
 }
 
 /**
  * Handle quality preset selection
  */
 function handleQualityPreset() {
-    const preset = document.getElementById('quality-preset').value;
-
-    switch (preset) {
-        case 'fast':
-            simulator.useLineRendering = true;
-            simulator.setSimplificationLevel(10.0); // Skip 90% of segments
-            simulator.setLayerMergeInterval(1);
-            document.getElementById('layer-height').value = 0.4;
-            document.getElementById('layer-height-value').textContent = '0.40';
-            break;
-        case 'normal':
-            simulator.useLineRendering = true;
-            simulator.setSimplificationLevel(4.0); // Skip 75% of segments
-            simulator.setLayerMergeInterval(2);
-            document.getElementById('layer-height').value = 0.2;
-            document.getElementById('layer-height-value').textContent = '0.20';
-            break;
-        case 'detailed':
-            simulator.useLineRendering = true;
-            simulator.setSimplificationLevel(2.0); // Skip 50% of segments
-            simulator.setLayerMergeInterval(3);
-            document.getElementById('layer-height').value = 0.15;
-            document.getElementById('layer-height-value').textContent = '0.15';
-            break;
-    }
+    const preset = (document.getElementById('dock-quality-preset') || {}).value || 'normal';
+    // Quality on a real slicer is mostly layer height: thinner layers, smoother sides, longer print
+    const layer = { fast: 0.3, normal: 0.2, detailed: 0.1 }[preset] || 0.2;
+    const sim = { fast: [10.0, 1], normal: [4.0, 2], detailed: [2.0, 3] }[preset] || [4.0, 2];
+    simulator.useLineRendering = true;
+    simulator.setSimplificationLevel(sim[0]);
+    simulator.setLayerMergeInterval(sim[1]);
+    const lh = document.getElementById('dock-layer-height');
+    if (lh) lh.value = layer;
+    const lv = document.getElementById('dock-layer-height-value');
+    if (lv) lv.textContent = layer.toFixed(2);
 
     console.log(`Quality preset: ${preset} (line rendering: ${simulator.useLineRendering})`);
 }
@@ -492,10 +544,12 @@ async function handleSTLUpload(event) {
         };
 
         // Add to loaded models
+        clearStarter();
         loadedModels.push(model);
 
         // Create ghost preview mesh
         createGhostPreview(model);
+        autoFitModel(model);
 
         // Automatically drop to build plate so model sits correctly
         // Wait a frame for the mesh to be fully created
@@ -530,6 +584,25 @@ async function handleSTLUpload(event) {
 /**
  * Load STL from URL button click
  */
+/**
+ * STL files carry no units, and many are drawn in meters or inches, so a model can arrive a
+ * couple of millimeters across or bigger than the bed. Scale it to something printable and say so.
+ */
+function autoFitModel(model) {
+    const size = model.boundingBox && model.boundingBox.size;
+    if (!size) return;
+    const biggest = Math.max(size.x, size.y, size.z);
+    if (!(biggest > 0)) return;
+    let target = null;
+    if (biggest < 10) target = 40;
+    else if (biggest > 180) target = 150;
+    if (!target) return;
+    const k = target / biggest;
+    model.scale = { x: k, y: k, z: k };
+    if (model.previewMesh) model.previewMesh.scaling = new BABYLON.Vector3(k, k, k);
+    showToast(`This model was ${biggest.toFixed(biggest < 10 ? 1 : 0)} mm across, so it was scaled to ${target} mm. Change it with Scale.`, 'info', 5000);
+}
+
 async function loadSTLFromURL() {
     const urlInput = document.getElementById('stl-url');
     const url = urlInput.value.trim();
@@ -556,6 +629,7 @@ function checkURLParameters() {
             loadSTLFromURLCore(stlUrl);
         }, 500);
     }
+    return !!stlUrl;
 }
 
 /**
@@ -625,10 +699,12 @@ async function loadSTLFromURLCore(url) {
         };
 
         // Add to loaded models
+        clearStarter();
         loadedModels.push(model);
 
         // Create ghost preview mesh
         createGhostPreview(model);
+        autoFitModel(model);
 
         // Automatically drop to build plate
         setTimeout(() => {
@@ -656,7 +732,12 @@ async function loadSTLFromURLCore(url) {
 
     } catch (error) {
         console.error('Error loading STL from URL:', error);
-        showToast(`Error loading STL from URL: ${error.message}`, 'error', 4000);
+        // "Failed to fetch" is what a browser says for a dead link and for a site that refuses
+        // to share its files with other sites alike
+        const why = /Failed to fetch|NetworkError|Load failed/i.test(error.message)
+            ? 'Could not download that file. Check the link, and use a direct link to the .stl file itself. Some sites (Thingiverse, Printables) do not let other sites download their files, so download it to your computer and use Add STL instead.'
+            : `Could not load that STL: ${error.message}`;
+        showToast(why, 'error', 8000);
     } finally {
         loadBtn.disabled = false;
         loadBtn.textContent = originalText;
@@ -709,6 +790,7 @@ async function loadSTLFromTextCore(stlText, name) {
  * Slice all models on build plate into G-code
  */
 async function sliceSTL() {
+    showStarterHint(false);
     if (loadedModels.length === 0) {
         showToast('Please load at least one STL model first!', 'error', 3000);
         return;
@@ -1454,9 +1536,10 @@ function onPrintComplete() {
     if (pauseBtn) pauseBtn.disabled = true;
     console.log('Print simulation complete!');
 
-    // Mark print as complete for save/restore
+    // Mark print as complete for save/restore. A restored print finishing is not a change:
+    // counting it made an untouched project ask "Leave site?"
     isPrintComplete = true;
-    markUnsavedChanges();
+    if (!restoringPrint) markUnsavedChanges();
 
     // Show completion toast
     showToast('Print simulation complete!', 'success');
@@ -2130,7 +2213,7 @@ function selectModel(modelId) {
 /**
  * Remove a model from the build plate
  */
-function removeModel(modelId) {
+function removeModel(modelId, quiet) {
     const index = loadedModels.findIndex(m => m.id === modelId);
     if (index === -1) return;
 
@@ -2159,13 +2242,14 @@ function removeModel(modelId) {
     // Disable slice button if no models
     if (loadedModels.length === 0) {
         updateSliceButton(true, '🔪 Slice');
-        updateSliceStatus('Load STL models to slice');
+        updateSliceStatus('Nothing on the plate. Add an STL, or switch to Learning to print a cube.');
     } else {
         updateSliceStatus(`${loadedModels.length} model(s) ready to slice`);
     }
 
     console.log(`Removed model ${modelId}`);
-    markDirty();
+    // quiet: swapping the starter for a saved project is not a change to that project
+    if (!quiet) markDirty();
 }
 
 /**
@@ -2195,7 +2279,9 @@ function updateTransformInputs() {
     document.getElementById('model-rotation-x').value = model.rotation.x.toFixed(0);
     document.getElementById('model-rotation-y').value = model.rotation.y.toFixed(0);
     document.getElementById('model-rotation-z').value = model.rotation.z.toFixed(0);
-    document.getElementById('model-scale').value = (model.scale.x * 100).toFixed(0);
+    const scaleSlider = document.getElementById('model-scale');
+    scaleSlider.max = Math.max(300, Math.ceil(model.scale.x * 100 * 2 / 5) * 5);
+    scaleSlider.value = (model.scale.x * 100).toFixed(0);
     document.getElementById('transform-controls').style.opacity = '1';
     document.getElementById('transform-controls').style.pointerEvents = 'auto';
 
@@ -2607,7 +2693,15 @@ function serializeProjectData() {
             filamentType: getElementValue('dock-filament-type', 'filament-type', 'pla'),
             filamentColor: getElementValue('filament-color', 'learn-filament-color', '#FF6600'),
             lineThickness: 1.0, // Fixed value - not exposed in simple UI
-            qualityPreset: getElementValue('quality-preset', 'learn-quality-preset', 'normal')
+            qualityPreset: getElementValue('dock-quality-preset', 'quality-preset', 'normal'),
+            speed: parseFloat(getElementValue('speed-slider', 'speed-slider', '1')),
+            learn: {
+                shape: getElementValue('shape-type', 'shape-type', 'cube'),
+                size: getElementValue('shape-size', 'shape-size', '20'),
+                pattern: getElementValue('learn-infill-pattern', 'learn-infill-pattern', 'grid'),
+                density: getElementValue('learn-infill-density', 'learn-infill-density', '20'),
+                speed: getElementValue('learn-speed', 'learn-speed', '5')
+            }
         },
         // Save print state - allows restoring printed models without re-simulating
         printState: {
@@ -2668,6 +2762,8 @@ function loadProjectData(data) {
         console.log('No project data to load');
         return;
     }
+    projectLoaded = true;
+    clearStarter();
 
     console.log('Loading project data:', data);
 
@@ -2726,6 +2822,23 @@ function loadProjectData(data) {
     if (settings.qualityPreset) {
         setElementValue('dock-quality-preset', settings.qualityPreset);
         setElementValue('quality-preset', settings.qualityPreset);
+    }
+    if (settings.layerHeight) {
+        // the preset sets a layer height of its own, so the saved one goes back after it
+        setElementValue('dock-layer-height', settings.layerHeight);
+        setElementText('dock-layer-height-value', Number(settings.layerHeight).toFixed(2));
+    }
+    if (settings.speed) {
+        setElementValue('speed-slider', settings.speed);
+        setElementText('speed-value', settings.speed);
+        if (simulator) simulator.setSpeed(settings.speed);
+    }
+    if (settings.learn) {
+        setElementValue('shape-type', settings.learn.shape);
+        setElementValue('shape-size', settings.learn.size);
+        setElementValue('learn-infill-pattern', settings.learn.pattern);
+        setElementValue('learn-infill-density', settings.learn.density);
+        setElementValue('learn-speed', settings.learn.speed);
     }
 
     // Restore models (only those loaded from URLs)
@@ -2803,6 +2916,7 @@ function loadProjectData(data) {
     if (data.printState && data.printState.printComplete && data.printState.gcode) {
         console.log('Restoring completed print from saved G-code...');
         isPrintComplete = true;
+        restoringPrint = true;
 
         // Wait for scene to be ready, then restore the print using quick print
         setTimeout(() => {
@@ -2827,6 +2941,7 @@ function loadProjectData(data) {
                 // Skip finalQualityRender (3D tubes) — line mesh is sufficient for restore
                 showToast('Restoring print...', 'info', 1500);
                 simulator.quickPrint(() => {
+                    restoringPrint = false;
                     showToast('Print restored!', 'success', 2000);
                     console.log('Print restoration complete!');
                 }, true);
@@ -2855,6 +2970,7 @@ window.addEventListener('beforeunload', function(e) {
 // ============================================================================
 
 let learningMode = false;  // Default to standard mode
+let restoringPrint = false;
 
 /**
  * Set mode (Learning or Standard)
@@ -2875,14 +2991,11 @@ function setMode(isLearning) {
     document.getElementById('learning-mode-btn').classList.toggle('active', isLearning);
     document.getElementById('standard-mode-btn').classList.toggle('active', !isLearning);
 
-    // Learning mode defaults
     if (isLearning) {
         const learnStepMode = document.getElementById('learn-step-mode');
-        if (learnStepMode) {
-            learnStepMode.checked = true;
-            stepMode = true;
-        }
+        stepMode = !!(learnStepMode && learnStepMode.checked);
     }
+    showStarterHint(starterOnPlate);
 
     // Update G-code annotations display
     updateGCodeAnnotations(isLearning);
@@ -3010,6 +3123,7 @@ function playLearningMode() {
         playBtn.textContent = '▶ Play';
     } else {
         playBtn.textContent = '⏸ Pause';
+        simulator.setSpeed(parseFloat((document.getElementById('learn-speed') || {}).value || 5));
         simulator.play();
     }
 }
@@ -3039,20 +3153,39 @@ function generateLearningShape() {
             gcodeText = generator.generateCube(shapeSize, shapeSize, infillPattern, infillDensity, 3);
     }
 
-    // Load G-code with annotations for learning mode
+    stopPlayingForStep();
     loadGCode(gcodeText);
     updateGCodeAnnotations(true);
 
-    // Auto-start in step mode
-    stepMode = true;
+    // the bottom bar showed Grid 20% while this panel said Honeycomb 50%
+    const dockPattern = document.getElementById('dock-infill-pattern');
+    if (dockPattern && [...dockPattern.options].some(o => o.value === infillPattern)) dockPattern.value = infillPattern;
+    const dockDensity = document.getElementById('dock-infill-density');
+    if (dockDensity) dockDensity.value = infillDensity;
+    const dockDensityValue = document.getElementById('dock-infill-density-value');
+    if (dockDensityValue) dockDensityValue.textContent = infillDensity;
+    simulator.setSpeed(parseFloat((document.getElementById('learn-speed') || {}).value || 5));
+
+    const stepEl = document.getElementById('learn-step-mode');
+    stepMode = !!(stepEl && stepEl.checked);
     updateStepControls();
+    showLayerInfo(0);
+    // Previous and Next sat below the fold; bring them up
+    const playback = document.getElementById('learn-playback-section');
+    if (playback && playback.scrollIntoView) playback.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    markDirty();
 
     console.log(`Generated ${shapeType} (${shapeSize}mm) with ${infillPattern} pattern at ${infillDensity}% density`);
 
-    // Auto-start the print simulation
-    setTimeout(() => {
-        playSimulation();
-    }, 100);
+    if (stepMode) {
+        setTimeout(stepForward, 100);
+    } else {
+        setTimeout(() => {
+            playSimulation();
+            const learnPlay = document.getElementById('learn-play-btn');
+            if (learnPlay) learnPlay.textContent = '\u23F8 Pause';
+        }, 100);
+    }
 }
 
 /**
@@ -3275,17 +3408,11 @@ document.addEventListener('DOMContentLoaded', () => {
         initDockResize();
         syncDockSettings();
 
-        // Learning Mode generate button
-        const generateLearnBtn = document.getElementById('generate-learn-btn');
-        if (generateLearnBtn) {
-            generateLearnBtn.addEventListener('click', generateLearningShape);
-        }
-
         // Learning color picker sync
         const learnColorPicker = document.getElementById('learn-filament-color');
         if (learnColorPicker) {
             learnColorPicker.addEventListener('input', (e) => {
-                simulator.setFilamentColor(e.target.value);
+                pickFilamentColor(e.target.value);
             });
         }
 
@@ -3339,8 +3466,9 @@ function applyLightingPreset(preset) {
             detailLevel = 50;
             break;
         case 'soft':
+            // above about 0.7 the ground light matches the main light and the part loses its shading
             brightness = 70;
-            shadowSoftness = 90;
+            shadowSoftness = 60;
             detailLevel = 50;
             break;
         case 'studio':
@@ -3355,8 +3483,8 @@ function applyLightingPreset(preset) {
             break;
         case 'flat':
             brightness = 60;
-            shadowSoftness = 100;
-            detailLevel = 20;
+            shadowSoftness = 70;
+            detailLevel = 40;
             break;
         default:
             brightness = 60;

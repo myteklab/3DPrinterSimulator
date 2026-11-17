@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3D Printer Simulator</title>
-    <link rel="stylesheet" href="css/style.css">
-    <script src="https://cdn.babylonjs.com/babylon.js"></script>
-    <script src="https://cdn.babylonjs.com/materialsLibrary/babylonjs.materials.min.js"></script>
-    <script src="https://cdn.babylonjs.com/serializers/babylonjs.serializers.min.js"></script>
+    <link rel="stylesheet" href="css/style.css?v=6">
+    <script src="https://cdn.jsdelivr.net/npm/babylonjs@9.37.0/babylon.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/babylonjs-materials@9.37.0/babylonjs.materials.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/babylonjs-serializers@9.37.0/babylonjs.serializers.min.js"></script>
 </head>
 <body>
     <!-- Status Toast -->
@@ -94,15 +94,16 @@
                     </h3>
                     <div id="learn-playback-section" class="collapsible-content show">
                         <label class="checkbox-label">
-                            <input type="checkbox" id="learn-step-mode" checked onchange="toggleLearnStepMode(this.checked)">
+                            <input type="checkbox" id="learn-step-mode" onchange="toggleLearnStepMode(this.checked)">
                             Step-Through Mode
                         </label>
-                        <div class="hint" style="margin-left: 24px; margin-top: -5px;">Watch one layer at a time</div>
+                        <div class="hint" style="margin-left: 24px; margin-top: -5px;">Stop after each layer. Next and Previous work either way.</div>
 
                         <div class="button-grid" style="grid-template-columns: 1fr 1fr; margin-top: 15px;">
                             <button id="learn-prev-layer" class="btn" onclick="stepBack()">&#x25C0; Previous</button>
                             <button id="learn-next-layer" class="btn btn-primary" onclick="stepForward()">Next &#x25B6;</button>
                         </div>
+                        <p id="learn-layer-info" class="hint" style="margin-top: 8px;">Press Generate, then Next to print one layer at a time.</p>
 
                         <hr style="border: 1px solid #333; margin: 15px 0;">
 
@@ -110,9 +111,9 @@
                         <div style="display: flex; gap: 10px; margin-top: 5px;">
                             <button id="learn-play-btn" class="btn" onclick="playLearningMode()" style="flex: 1;">&#x25B6; Play</button>
                             <select id="learn-speed" style="width: 100px;" onchange="setLearnSpeed(this.value)">
-                                <option value="0.5">Slow</option>
-                                <option value="1" selected>Normal</option>
-                                <option value="5">Fast</option>
+                                <option value="1">Slow</option>
+                                <option value="5" selected>Normal</option>
+                                <option value="30">Fast</option>
                             </select>
                         </div>
 
@@ -130,7 +131,7 @@
                     <div id="learn-color-section" class="collapsible-content show">
                         <div class="color-picker-row">
                             <input type="color" id="learn-filament-color" value="#ff6b35">
-                            <select id="learn-color-presets" onchange="document.getElementById('learn-filament-color').value = this.value; simulator.setFilamentColor(this.value);">
+                            <select id="learn-color-presets" onchange="document.getElementById('learn-filament-color').value = this.value; pickFilamentColor(this.value);">
                                 <option value="#ff6b35">Orange</option>
                                 <option value="#ffffff">White</option>
                                 <option value="#000000">Black</option>
@@ -159,6 +160,7 @@
                         <input type="text" id="stl-url" placeholder="https://example.com/model.stl"
                                style="width: 100%; padding: 8px; background: #1a1a2e; border: 1px solid #333; color: #eee; border-radius: 4px; font-size: 12px;">
                         <button id="load-url-btn" class="btn btn-secondary" style="width: 100%; margin-top: 5px;">&#x1F310; Load STL from URL</button>
+                        <div class="hint" style="margin-top: 4px;">A direct link to a .stl file. Many model sites block this: download the file and use Add STL instead.</div>
                     </div>
 
                     <div id="save-status" style="text-align: center; margin-top: 5px; font-size: 11px; color: #888;"></div>
@@ -320,6 +322,7 @@
         <!-- 3D Viewport -->
         <div id="viewport-container">
             <canvas id="renderCanvas"></canvas>
+            <div id="starter-hint" class="starter-hint" hidden>This little house is a 3D model. Press <strong>Slice</strong> to cut it into layers, then <strong>Print</strong>. Or try <strong>Learning</strong> (top left) to print a cube one layer at a time. <button type="button" onclick="this.parentNode.hidden = true" aria-label="Close">&times;</button></div>
 
             <!-- Floating HUD (upper-right) -->
             <div id="printer-hud">
@@ -409,7 +412,7 @@
                                 <option value="concentric">Concentric</option>
                             </select>
                             <label class="inline-setting">Infill:<input type="range" id="dock-infill-density" min="0" max="100" step="5" value="20" class="sm-range"><span id="dock-infill-density-value">20</span>%</label>
-                            <label class="inline-setting">Layer:<input type="range" id="dock-layer-height" min="0.1" max="0.4" step="0.05" value="0.2" class="sm-range"><span id="dock-layer-height-value">0.2</span>mm</label>
+                            <label class="inline-setting">Layer height:<input type="range" id="dock-layer-height" min="0.1" max="0.4" step="0.05" value="0.2" class="sm-range"><span id="dock-layer-height-value">0.2</span>mm</label>
                             <select id="dock-filament-type" class="sm" title="Filament Type">
                                 <option value="pla" selected>PLA</option>
                                 <option value="petg">PETG</option>
@@ -530,66 +533,66 @@
         </div>
     </div>
 
-    <script src="js/GCodeParser.js"></script>
-    <script src="js/GCodeGenerator.js"></script>
-    <script src="js/STLSlicer.js"></script>
-    <script src="js/PrinterSimulator.js"></script>
-    <script src="js/main.js"></script>
+    <script src="js/GCodeParser.js?v=6"></script>
+    <script src="js/GCodeGenerator.js?v=6"></script>
+    <script src="js/STLSlicer.js?v=6"></script>
+    <script src="js/PrinterSimulator.js?v=6"></script>
+    <script src="js/main.js?v=6"></script>
 
     <script>
     // Help content database
     const helpContent = {
         '3d-printing': {
-            title: '&#x1F5A8;&#xFE0F; What is 3D Printing?',
-            content: '<div class="help-section"><h3>How 3D Printing Works</h3><p>3D printing, also called <strong>additive manufacturing</strong>, creates physical objects by building them up <strong>layer by layer</strong> from the bottom up.</p></div><div class="help-section"><h3>Camera Controls</h3><ul><li><strong>Left-click + drag:</strong> Rotate the view</li><li><strong>Right-click + drag:</strong> Pan (move) the view</li><li><strong>Scroll wheel:</strong> Zoom in and out</li></ul></div>'
+            title: 'What is 3D printing?',
+            content: '<div class="help-section"><h3>How it works</h3><p>A 3D printer melts a thin string of plastic called <strong>filament</strong> and draws one flat layer at a time, each on top of the last.</p><ol><li>A <strong>3D model</strong> (an STL file) describes the outside of the object.</li><li>A <strong>slicer</strong> cuts it into thin layers and writes <strong>G-code</strong>: every move the nozzle will make.</li><li>The printer follows the G-code, line by line.</li></ol><p>This app does all three: press <strong>Slice</strong>, then <strong>Print</strong>.</p></div><div class="help-section"><h3>Moving the camera</h3><ul><li><strong>Drag:</strong> turn the view</li><li><strong>Scroll, or two fingers on a trackpad:</strong> zoom</li><li><strong>Right-drag, or Control-click and drag:</strong> slide the view sideways</li></ul></div>'
         },
         'shapes': {
-            title: '&#x1F3B2; Shape Generator',
-            content: '<div class="help-section"><h3>Available Shapes</h3><p><strong>Cube</strong> - A box shape. Great for learning layers and infill.</p><p><strong>Cylinder</strong> - A round tube. Shows how printers create curves.</p><p><strong>Pyramid</strong> - Gets smaller going up. Shows shrinking layers.</p></div>'
+            title: 'Shape generator',
+            content: '<div class="help-section"><p><strong>Cube</strong>: straight walls, the easiest place to see layers and infill.</p><p><strong>Cylinder</strong>: a round wall, drawn as many short straight moves.</p><p><strong>Pyramid</strong>: every layer is a little smaller than the one below, so the slope is really a staircase.</p><p>Tick <strong>Step-Through Mode</strong> before Generate to stop after each layer, then use <strong>Next</strong> and <strong>Previous</strong>.</p></div>'
         },
         'infill': {
-            title: '&#x2699;&#xFE0F; Infill Patterns & Density',
-            content: '<div class="help-section"><h3>What is Infill?</h3><p>Infill is the <strong>internal structure</strong> inside a 3D printed object. Patterns include Grid, Honeycomb, Lines, Concentric, and Zigzag.</p><p>More infill = stronger but slower to print.</p></div>'
+            title: 'Infill',
+            content: '<div class="help-section"><h3>What is infill?</h3><p>Most printed parts are <strong>mostly air inside</strong>. Infill is the pattern of thin walls that holds the outside up. Density says how much: 20% means about a fifth of the inside is plastic.</p><p>More infill is stronger and heavier, and it takes more plastic and more time.</p></div><div class="help-section"><h3>The patterns</h3><ul><li><strong>Grid</strong>: crossing lines. Strong both ways, quick to print.</li><li><strong>Lines</strong>: one direction. The fastest and the weakest.</li><li><strong>Honeycomb</strong>: hexagons, like a beehive. Very strong for the plastic it uses.</li><li><strong>Concentric</strong>: rings that follow the outline. Good for parts that bend.</li><li><strong>Zigzag</strong>: diagonal lines.</li></ul><p>The last few layers are solid, so a finished print hides its infill. To see it, use <strong>Previous</strong> to go back down a few layers.</p></div>'
         },
         'layers': {
-            title: '&#x1F441;&#xFE0F; Understanding Layers',
-            content: '<div class="help-section"><h3>How Layers Work</h3><p>Every 3D printed object is made of <strong>thin horizontal slices</strong> stacked on top of each other.</p><p>Use Step-Through Mode to watch each layer being printed one at a time.</p></div>'
+            title: 'Layers',
+            content: '<div class="help-section"><h3>How layers work</h3><p>Every print is a stack of thin flat slices. <strong>Layer height</strong> is how thick each slice is.</p><ul><li><strong>0.1 mm</strong>: smooth sides, but twice as many layers as 0.2 mm, so twice as long.</li><li><strong>0.2 mm</strong>: the usual choice.</li><li><strong>0.3 mm</strong>: fast, with steps you can see on slopes.</li></ul><p>Each layer starts with the outside wall, then the infill. The first and last few layers are filled in solid to make a floor and a roof.</p></div>'
         },
         'filament': {
-            title: '&#x1F3A8; Filament',
-            content: '<div class="help-section"><h3>Common Types</h3><p><strong>PLA</strong> - Easy, biodegradable. <strong>PETG</strong> - Strong, flexible. <strong>ABS</strong> - Heat resistant. <strong>TPU</strong> - Flexible/rubbery.</p></div>'
+            title: 'Filament',
+            content: '<div class="help-section"><p><strong>PLA</strong>: the easiest, prints at about 200&deg;C. <strong>PETG</strong>: tougher, about 240&deg;C. <strong>ABS</strong>: takes heat well, about 240&deg;C with a hot bed. <strong>TPU</strong>: rubbery and flexible, about 225&deg;C. Picking one sets the nozzle temperature.</p><p>A new color loads for the next print, the same as changing the spool on a real printer.</p></div>'
         },
         'stl': {
-            title: '&#x1F4C1; STL Files',
-            content: '<div class="help-section"><h3>What is an STL File?</h3><p>STL is the most common 3D printing format. It describes surfaces using triangles. Load STL files to slice and print them.</p></div>'
+            title: 'STL files',
+            content: '<div class="help-section"><h3>What is an STL file?</h3><p>An STL file describes the outside of an object as thousands of tiny triangles. It has no colors and no units: most programs mean millimeters, so a model drawn in meters or inches can arrive tiny or huge. This app scales those to a printable size.</p><p>Make your own in a 3D design app and export it as STL, then use <strong>Add STL</strong>. <strong>Load STL from URL</strong> needs a direct link to the .stl file itself; many model sites do not allow that, so download the file first.</p></div>'
         },
         'buildplate': {
-            title: '&#x1F5C2;&#xFE0F; Build Plate',
-            content: '<div class="help-section"><h3>Build Plate</h3><p>The 200mm x 200mm surface where prints are created. You can load multiple models at once.</p></div>'
+            title: 'Build plate',
+            content: '<div class="help-section"><p>The 200 mm by 200 mm surface the print is made on. You can put more than one model on it.</p></div>'
         },
         'transform': {
-            title: '&#x1F3AF; Position & Scale',
-            content: '<div class="help-section"><h3>Controls</h3><p>Move (X/Y/Z), rotate, and scale your models. Use 3D gizmos for interactive manipulation. Drop to Build Plate aligns the bottom to Z=0.</p></div>'
+            title: 'Position and scale',
+            content: '<div class="help-section"><p>Move, turn and resize a model with the handles in the 3D view or the sliders. <strong>Drop to Build Plate</strong> sets it flat on the plate: a model floating in the air cannot print.</p></div>'
         },
         'appearance': {
-            title: '&#x1F3A8; Appearance',
-            content: '<div class="help-section"><p>Choose filament color, enable rainbow layers, toggle 3D cylinders mode, and show/hide the print head and build plate.</p></div>'
+            title: 'Appearance',
+            content: '<div class="help-section"><p>Filament color, rainbow layers, and showing or hiding the print head and the build plate.</p></div>'
         },
         'printer-status': {
-            title: '&#x1F4CA; Printer Status',
-            content: '<div class="help-section"><p>Shows current layer, line, position, status, temperatures, and progress during printing.</p></div>'
+            title: 'Printer status',
+            content: '<div class="help-section"><p>The layer and the G-code line the printer is on, where the nozzle is, the temperatures, and how far along the print is.</p></div>'
         },
         'slicer': {
-            title: '&#x1F52A; Slicer Settings',
-            content: '<div class="help-section"><h3>Slicing</h3><p>Converts 3D models into G-code instructions. Adjust quality, infill pattern, density, layer height, and filament type.</p></div>'
+            title: 'Slicer',
+            content: '<div class="help-section"><p>The slicer turns the model into layers and G-code. <strong>Quality</strong> picks the layer height: Fast 0.3 mm, Normal 0.2 mm, Detailed 0.1 mm. <strong>Infill</strong> sets how full the inside is. Press Slice again after changing anything.</p></div>'
         },
         'gcode': {
-            title: '&#x1F4DC; G-code Viewer',
-            content: '<div class="help-section"><h3>G-code</h3><p>The language that tells 3D printers what to do. G0 = move, G1 = extrude, M104 = set temperature. Enable live tracking to follow along during prints.</p></div>'
+            title: 'G-code',
+            content: '<div class="help-section"><h3>The printer\'s instructions</h3><p>G-code is the list the slicer writes, one instruction per line. The printer does exactly what each line says.</p><ul><li><strong>G1 X10 Y20 E5</strong>: move to x 10, y 20 while pushing out plastic</li><li><strong>G0 X10 Y20</strong>: move there without plastic (a travel move)</li><li><strong>G28</strong>: go to the home corner</li><li><strong>M104 S200</strong>: heat the nozzle to 200&deg;C</li><li><strong>M140 S60</strong>: heat the bed to 60&deg;C</li></ul><p>The G-code viewer at the bottom shows the real lines for your print and follows along as it prints.</p></div>'
         },
         'lighting': {
-            title: '&#x1F4A1; Lighting',
-            content: '<div class="help-section"><p>Adjust brightness, shadow softness, and layer detail. Try presets: Layers, Soft, Studio, or Flat.</p></div>'
+            title: 'Lighting',
+            content: '<div class="help-section"><p>Brightness, shadow and detail. Layers shows the layer lines best.</p></div>'
         }
     };
 

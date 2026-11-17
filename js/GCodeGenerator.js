@@ -208,33 +208,95 @@ class GCodeGenerator {
     }
 
     /**
-     * Honeycomb infill (hexagonal pattern)
+     * Honeycomb infill. Each band is a row of half-hexagons, and the next band is its mirror
+     * image, so the two share their flat sides and close into hexagons the way slicers draw it.
      */
-    generateHoneycombInfill(size, z, center, density) {
-        const gcode = [];
-        const offset = size / 2 - 0.2; // Fill to just inside outer wall
-
-        // Calculate spacing based on density
-        const maxSpacing = 5.0;
-        const minSpacing = 1.0;
-        const spacing = maxSpacing - ((density / 100) * (maxSpacing - minSpacing));
-
-        if (density === 0) return gcode;
-
-        // Simplified honeycomb using diagonal lines
-        for (let y = -offset; y <= offset; y += spacing) {
-            const endY = Math.min(y + spacing, offset);
-
-            // Diagonal up-right
-            gcode.push(`G0 X${(-offset).toFixed(2)} Y${y.toFixed(2)} F3000`);
-            gcode.push(`G1 X${offset.toFixed(2)} Y${endY.toFixed(2)} E${this.extrusionCounter += 4} F1500`);
-
-            // Diagonal down-right
-            gcode.push(`G0 X${(-offset).toFixed(2)} Y${endY.toFixed(2)} F3000`);
-            gcode.push(`G1 X${offset.toFixed(2)} Y${y.toFixed(2)} E${this.extrusionCounter += 4} F1500`);
+    honeycombPolylines(half, density) {
+        const spacing = 5.0 - (density / 100) * 4.0;
+        const r = Math.max(0.5, spacing * 0.6);        // side of one hexagon, mm
+        const h = r * Math.sqrt(3) / 2;                  // half a hexagon's height
+        const period = 3 * r;
+        const polys = [];
+        let band = 0;
+        for (let y0 = -half; y0 + h <= half + 1e-6; y0 += h, band++) {
+            const a = band % 2 === 0 ? y0 : y0 + h, b = band % 2 === 0 ? y0 + h : y0;
+            const yAt = (x) => {
+                const u = ((x + half) % period + period) % period;
+                if (u < r) return a;
+                if (u < 1.5 * r) return a + (b - a) * (u - r) / (0.5 * r);
+                if (u < 2.5 * r) return b;
+                return b + (a - b) * (u - 2.5 * r) / (0.5 * r);
+            };
+            const xs = [-half, half];
+            for (let base = -half; base < half; base += period) {
+                [r, 1.5 * r, 2.5 * r, 3 * r].forEach(k => { if (base + k < half) xs.push(base + k); });
+            }
+            xs.sort((p, q) => p - q);
+            const pts = xs.map(x => [x, yAt(x)]);
+            polys.push(band % 2 === 0 ? pts : pts.reverse());
         }
+        return polys;
+    }
 
+    generateHoneycombInfill(size, z, center, density) {
+        if (density === 0) return [];
+        return this.emitPolylines(this.honeycombPolylines(size / 2 - 0.2, density), null);
+    }
+
+    /**
+     * Polylines to G-code. With a radius, every segment is clipped to that circle first, so one
+     * set of pattern generators serves the cube, the pyramid and the cylinder.
+     */
+    emitPolylines(polys, radius) {
+        const gcode = [];
+        let at = null;
+        const move = (p, q) => {
+            if (!at || Math.hypot(at[0] - p[0], at[1] - p[1]) > 0.01) gcode.push(`G0 X${p[0].toFixed(2)} Y${p[1].toFixed(2)} F3000`);
+            const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
+            this.extrusionCounter += Math.max(0.05, len * 0.15);
+            gcode.push(`G1 X${q[0].toFixed(2)} Y${q[1].toFixed(2)} E${this.extrusionCounter.toFixed(3)} F1500`);
+            at = q;
+        };
+        for (const pts of polys) {
+            for (let i = 1; i < pts.length; i++) {
+                let p = pts[i - 1], q = pts[i];
+                if (radius) {
+                    const dx = q[0] - p[0], dy = q[1] - p[1];
+                    const A = dx * dx + dy * dy, B = 2 * (p[0] * dx + p[1] * dy), C = p[0] * p[0] + p[1] * p[1] - radius * radius;
+                    const disc = B * B - 4 * A * C;
+                    if (A < 1e-9 || disc <= 0) continue;
+                    const t0 = Math.max(0, (-B - Math.sqrt(disc)) / (2 * A)), t1 = Math.min(1, (-B + Math.sqrt(disc)) / (2 * A));
+                    if (t1 - t0 < 1e-6) continue;
+                    p = [pts[i - 1][0] + dx * t0, pts[i - 1][1] + dy * t0];
+                    q = [pts[i - 1][0] + dx * t1, pts[i - 1][1] + dy * t1];
+                }
+                move(p, q);
+            }
+        }
         return gcode;
+    }
+
+    /** The open patterns as polylines over a square of half-width `half`. */
+    patternPolylines(pattern, half, density) {
+        if (pattern === 'honeycomb') return this.honeycombPolylines(half, density);
+        const polys = [];
+        if (pattern === 'zigzag') {
+            const spacing = 4.0 - (density / 100) * 3.0;
+            let i = 0;
+            for (let x = -half; x <= half; x += spacing, i++) {
+                const endX = Math.min(x + spacing, half);
+                polys.push(i % 2 === 0 ? [[x, -half], [endX, half]] : [[x, half], [endX, -half]]);
+            }
+            return polys;
+        }
+        const spacing = 4.0 - (density / 100) * 3.6;
+        let i = 0;
+        for (let y = -half; y <= half; y += spacing, i++) polys.push(i % 2 === 0 ? [[-half, y], [half, y]] : [[half, y], [-half, y]]);
+        if (pattern === 'grid' && density < 100) {
+            i = 0;
+            for (let x = -half; x <= half; x += spacing, i++) polys.push(i % 2 === 0 ? [[x, -half], [x, half]] : [[x, half], [x, -half]]);
+        }
+        return polys;
     }
 
     /**
@@ -443,20 +505,7 @@ class GCodeGenerator {
                 }
             }
         } else {
-            // Grid/lines pattern clipped to circle
-            for (let y = -innerRadius; y <= innerRadius; y += spacing) {
-                const xExtent = Math.sqrt(Math.max(0, innerRadius * innerRadius - y * y));
-                if (xExtent > 0.1) {
-                    const lineIndex = Math.floor((y + innerRadius) / spacing);
-                    if (lineIndex % 2 === 0) {
-                        gcode.push(`G0 X${(-xExtent).toFixed(2)} Y${y.toFixed(2)} F3000`);
-                        gcode.push(`G1 X${xExtent.toFixed(2)} Y${y.toFixed(2)} E${this.extrusionCounter += 2} F1500`);
-                    } else {
-                        gcode.push(`G0 X${xExtent.toFixed(2)} Y${y.toFixed(2)} F3000`);
-                        gcode.push(`G1 X${(-xExtent).toFixed(2)} Y${y.toFixed(2)} E${this.extrusionCounter += 2} F1500`);
-                    }
-                }
-            }
+            return this.emitPolylines(this.patternPolylines(pattern, innerRadius, density), innerRadius);
         }
 
         return gcode;
@@ -504,8 +553,8 @@ class GCodeGenerator {
 
             // Stop if layer is too small to print
             if (currentSize < 2) {
-                gcode.push(`; Layer ${layer + 1} skipped (too small)`);
-                continue;
+                gcode.push('; The tip is narrower than 2 mm: too small to print, so the print ends here');
+                break;
             }
 
             gcode.push(`; Layer ${layer + 1} (Z=${z.toFixed(2)}, size=${currentSize.toFixed(1)}mm)`);
@@ -589,31 +638,7 @@ class GCodeGenerator {
      * Generate sparse infill for pyramid layer
      */
     generatePyramidInfill(size, z, pattern, density) {
-        const gcode = [];
-        // Fill to just inside the outer perimeter
-        const offset = size / 2 - 0.2;
-
-        if (offset <= 0) return gcode;
-
-        // Calculate spacing based on density
-        const maxSpacing = 4.0;
-        const minSpacing = 0.5;
-        const spacing = maxSpacing - ((density / 100) * (maxSpacing - minSpacing));
-
-        if (density === 0) return gcode;
-
-        // Lines pattern with proper travel moves
-        for (let y = -offset; y <= offset; y += spacing) {
-            const lineIndex = Math.floor((y + offset) / spacing);
-            if (lineIndex % 2 === 0) {
-                gcode.push(`G0 X${(-offset).toFixed(2)} Y${y.toFixed(2)} F3000`);
-                gcode.push(`G1 X${offset.toFixed(2)} Y${y.toFixed(2)} E${this.extrusionCounter += 2} F1500`);
-            } else {
-                gcode.push(`G0 X${offset.toFixed(2)} Y${y.toFixed(2)} F3000`);
-                gcode.push(`G1 X${(-offset).toFixed(2)} Y${y.toFixed(2)} E${this.extrusionCounter += 2} F1500`);
-            }
-        }
-
-        return gcode;
+        if (size / 2 - 0.2 <= 0) return [];
+        return this.generateInfill(size, z, size / 2, pattern, density);
     }
 }
