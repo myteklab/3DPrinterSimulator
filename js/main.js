@@ -270,16 +270,8 @@ function setupEventListeners() {
         });
     }
 
-    const colorPresetsEl = document.getElementById('color-presets');
-    if (colorPresetsEl) {
-        colorPresetsEl.addEventListener('change', (e) => {
-            const hex = e.target.value;
-            const colorInput = document.getElementById('filament-color');
-            if (colorInput) colorInput.value = hex;
-            pickFilamentColor(hex);
-            console.log(`Color preset selected: ${hex}`);
-        });
-    }
+    initSwatches();
+    document.querySelectorAll('#gizmo-mode button').forEach(b => b.addEventListener('click', () => setGizmoMode(b.dataset.gizmo)));
 
     // Temperature presets for different filament types
     const filamentPresets = {
@@ -776,7 +768,7 @@ async function loadSTLFromURLCore(url, opts = {}) {
         // to share its files with other sites alike
         const why = opts.name ? `Could not load "${opts.name}": ${error.message}`
             : /Failed to fetch|NetworkError|Load failed/i.test(error.message)
-            ? 'Could not download that file. Check the link, and use a direct link to the .stl file itself. Some sites (Thingiverse, Printables) do not let other sites download their files, so download it to your computer and use Add STL instead.'
+            ? 'Could not download that file. Check the link, and use a direct link to the .stl file itself. Some sites (Thingiverse, Printables) do not let other sites download their files, so download it to your computer and use Upload an STL file instead.'
             : `Could not load that STL: ${error.message}`;
         showToast(why, 'error', 8000);
     } finally {
@@ -2220,7 +2212,7 @@ function updateModelList() {
     if (!container) return;
 
     if (loadedModels.length === 0) {
-        container.innerHTML = '<div style="color: #888; font-size: 12px; padding: 10px; text-align: center;">No models loaded</div>';
+        container.innerHTML = '<div class="empty-note">Nothing on the plate yet.</div>';
         return;
     }
 
@@ -2230,7 +2222,7 @@ function updateModelList() {
         html += `
             <div class="model-item ${isSelected ? 'selected' : ''}" onclick="selectModel(${model.id})">
                 <div class="model-name">${model.name}</div>
-                <div class="model-info">${(model.triangleCount / 1000).toFixed(1)}K triangles</div>
+                <div class="model-info">${model.triangleCount < 1000 ? model.triangleCount : (model.triangleCount / 1000).toFixed(1) + 'K'} triangles</div>
                 <button class="btn-remove" onclick="event.stopPropagation(); removeModel(${model.id})">✕</button>
             </div>
         `;
@@ -2590,12 +2582,6 @@ function attachGizmosToModel(modelId) {
 function toggleGizmos(enabled) {
     if (!gizmoManager) return;
 
-    // Show/hide gizmo type selector
-    const selector = document.getElementById('gizmo-type-selector');
-    if (selector) {
-        selector.style.display = enabled ? 'block' : 'none';
-    }
-
     if (enabled && selectedModelId) {
         // Re-attach gizmos to selected model
         attachGizmosToModel(selectedModelId);
@@ -2603,6 +2589,44 @@ function toggleGizmos(enabled) {
         // Detach gizmos
         gizmoManager.attachToMesh(null);
     }
+}
+
+// The Off / Move / Rotate / Scale buttons drive the hidden checkbox and select
+// that the rest of the gizmo code reads.
+function setGizmoMode(mode) {
+    const on = mode !== 'off';
+    document.getElementById('show-gizmos').checked = on;
+    if (on) {
+        document.getElementById('gizmo-type').value = mode;
+        changeGizmoType(mode);
+    }
+    toggleGizmos(on);
+    document.querySelectorAll('#gizmo-mode button').forEach(b => b.classList.toggle('active', b.dataset.gizmo === mode));
+}
+
+// A swatch sets the color input beside it and fires its input event, so the
+// handlers and the save code see one color source, as before.
+function initSwatches() {
+    document.querySelectorAll('.swatches').forEach(group => {
+        const input = document.getElementById(group.dataset.for);
+        if (!input) return;
+        group.addEventListener('click', (e) => {
+            const b = e.target.closest('button[data-color]');
+            if (!b) return;
+            input.value = b.dataset.color;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        input.addEventListener('input', markSwatches);
+    });
+    markSwatches();
+}
+function markSwatches() {
+    document.querySelectorAll('.swatches').forEach(group => {
+        const input = document.getElementById(group.dataset.for);
+        if (!input) return;
+        const v = input.value.toLowerCase();
+        group.querySelectorAll('button[data-color]').forEach(b => b.classList.toggle('active', b.dataset.color === v));
+    });
 }
 
 /**
@@ -2873,6 +2897,7 @@ function loadProjectData(data) {
     }
     if (settings.filamentColor) {
         setElementValue('filament-color', settings.filamentColor);
+        markSwatches();
         if (simulator) simulator.setFilamentColor(settings.filamentColor);
     }
     if (settings.qualityPreset) {
@@ -3565,10 +3590,8 @@ function applyLightingPreset(preset) {
     if (shadowSlider) shadowSlider.value = shadowSoftness;
     if (detailSlider) detailSlider.value = detailLevel;
 
-    // Apply the changes
     updateLighting();
-
-    showToast(`Applied "${preset}" lighting preset`, 'info', 2000);
+    document.querySelectorAll('#lighting-presets button').forEach(b => b.classList.toggle('active', b.dataset.preset === preset));
 }
 
 // ============================================================================

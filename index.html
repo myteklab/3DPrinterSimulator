@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3D Printer Simulator</title>
-    <link rel="stylesheet" href="css/style.css?v=8">
+    <link rel="stylesheet" href="css/style.css?v=9">
     <script src="https://cdn.jsdelivr.net/npm/babylonjs@9.37.0/babylon.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/babylonjs-materials@9.37.0/babylonjs.materials.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/babylonjs-serializers@9.37.0/babylonjs.serializers.min.js"></script>
@@ -17,308 +17,272 @@
         <div id="workspace">
             <!-- Controls Panel -->
             <div id="controls-panel">
-                <h2 style="white-space: nowrap;">3D Printer <span class="help-icon" onclick="showHelp('3d-printing')">?</span></h2>
+                <div class="panel-title">
+                    <h2>3D Printer</h2>
+                    <span class="help-icon" onclick="showHelp('3d-printing')">?</span>
+                </div>
 
-                <!-- Mode Toggle -->
                 <div class="mode-toggle-container">
                     <button id="learning-mode-btn" class="mode-btn" onclick="setMode(true)">Learning</button>
                     <button id="standard-mode-btn" class="mode-btn active" onclick="setMode(false)">Standard</button>
                 </div>
 
-                <!-- ========== LEARNING MODE SECTIONS ========== -->
+                <!-- ========== LEARNING MODE ========== -->
 
-                <!-- LEARNING: Shape Generator -->
                 <div class="control-group" data-mode="learning">
                     <h3 class="section-header" onclick="toggleSection('learn-shape-section')">
-                        <span class="section-icon">&#x1F3B2;</span> Shape Generator
+                        <span class="section-title">Pick a shape</span>
                         <span class="help-icon" onclick="event.stopPropagation(); showHelp('shapes')">?</span>
                         <span class="chevron">&#x25BC;</span>
                     </h3>
                     <div id="learn-shape-section" class="collapsible-content show">
-                        <label for="shape-type"><span class="label-icon">&#x1F4D0;</span> Shape:</label>
-                        <select id="shape-type">
-                            <option value="cube">Cube</option>
-                            <option value="cylinder">Cylinder</option>
-                            <option value="pyramid">Pyramid</option>
-                        </select>
-
-                        <label for="shape-size" style="margin-top: 10px;"><span class="label-icon">&#x1F4CF;</span> Size:</label>
-                        <select id="shape-size">
-                            <option value="10">Small (10mm)</option>
-                            <option value="20" selected>Medium (20mm)</option>
-                            <option value="30">Large (30mm)</option>
-                        </select>
-
-                        <button id="generate-learn-btn" class="btn btn-primary btn-large" style="margin-top: 15px; width: 100%;" onclick="generateLearningShape()">
-                            &#x1F3AC; Generate & Watch Print
-                        </button>
+                        <div class="field-pair">
+                            <div>
+                                <label for="shape-type">Shape</label>
+                                <select id="shape-type">
+                                    <option value="cube">Cube</option>
+                                    <option value="cylinder">Cylinder</option>
+                                    <option value="pyramid">Pyramid</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="shape-size">Size</label>
+                                <select id="shape-size">
+                                    <option value="10">10 mm</option>
+                                    <option value="20" selected>20 mm</option>
+                                    <option value="30">30 mm</option>
+                                </select>
+                            </div>
+                        </div>
+                        <button id="generate-learn-btn" class="btn btn-primary btn-large" onclick="generateLearningShape()">Generate and print</button>
                     </div>
                 </div>
 
-                <!-- LEARNING: Simplified Print Settings -->
                 <div class="control-group" data-mode="learning">
                     <h3 class="section-header" onclick="toggleSection('learn-settings-section')">
-                        <span class="section-icon">&#x2699;&#xFE0F;</span> Print Settings
+                        <span class="section-title">The inside</span>
                         <span class="help-icon" onclick="event.stopPropagation(); showHelp('infill')">?</span>
                         <span class="chevron">&#x25BC;</span>
                     </h3>
                     <div id="learn-settings-section" class="collapsible-content show">
-                        <label for="learn-infill-pattern"><span class="label-icon">&#x1F3A8;</span> Infill Pattern:</label>
+                        <label for="learn-infill-pattern">Infill pattern</label>
                         <select id="learn-infill-pattern">
-                            <option value="grid">Grid - Strong & Fast</option>
-                            <option value="honeycomb">Honeycomb - Very Strong</option>
-                            <option value="lines">Lines - Fast</option>
-                            <option value="concentric">Concentric - Flexible</option>
-                            <option value="zigzag">Zigzag - Decorative</option>
+                            <option value="grid">Grid: strong and fast</option>
+                            <option value="honeycomb">Honeycomb: very strong</option>
+                            <option value="lines">Lines: fast</option>
+                            <option value="concentric">Concentric: bends well</option>
+                            <option value="zigzag">Zigzag: decorative</option>
                         </select>
-                        <div class="hint">How the inside of your shape is filled</div>
-
-                        <label for="learn-infill-density" style="margin-top: 10px;"><span class="label-icon">&#x1F4CA;</span> Infill Amount:</label>
+                        <label for="learn-infill-density" class="gap-top">How full</label>
                         <select id="learn-infill-density">
-                            <option value="0">Empty (0%) - Hollow</option>
+                            <option value="0">Empty (0%), hollow</option>
                             <option value="10">Light (10%)</option>
                             <option value="20" selected>Normal (20%)</option>
                             <option value="50">Strong (50%)</option>
                             <option value="100">Solid (100%)</option>
                         </select>
-                        <div class="hint">More infill = stronger but slower to print</div>
+                        <div class="hint">More infill is stronger, and slower to print.</div>
                     </div>
                 </div>
 
-                <!-- LEARNING: Simplified Playback -->
                 <div class="control-group" data-mode="learning">
                     <h3 class="section-header" onclick="toggleSection('learn-playback-section')">
-                        <span class="section-icon">&#x1F441;&#xFE0F;</span> Watch Printing
+                        <span class="section-title">Watch it print</span>
                         <span class="help-icon" onclick="event.stopPropagation(); showHelp('layers')">?</span>
                         <span class="chevron">&#x25BC;</span>
                     </h3>
                     <div id="learn-playback-section" class="collapsible-content show">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="learn-step-mode" onchange="toggleLearnStepMode(this.checked)">
-                            Step-Through Mode
-                        </label>
-                        <div class="hint" style="margin-left: 24px; margin-top: -5px;">Stop after each layer. Next and Previous work either way.</div>
-
-                        <div class="button-grid" style="grid-template-columns: 1fr 1fr; margin-top: 15px;">
-                            <button id="learn-prev-layer" class="btn" onclick="stepBack()">&#x25C0; Previous</button>
+                        <div class="button-pair">
+                            <button id="learn-prev-layer" class="btn btn-secondary" onclick="stepBack()">&#x25C0; Previous</button>
                             <button id="learn-next-layer" class="btn btn-primary" onclick="stepForward()">Next &#x25B6;</button>
                         </div>
-                        <p id="learn-layer-info" class="hint" style="margin-top: 8px;">Press Generate, then Next to print one layer at a time.</p>
+                        <p id="learn-layer-info" class="hint">Press Generate, then Next to print one layer at a time.</p>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="learn-step-mode" onchange="toggleLearnStepMode(this.checked)">
+                            Stop after each layer
+                        </label>
 
-                        <hr style="border: 1px solid #333; margin: 15px 0;">
-
-                        <label>Or auto-play:</label>
-                        <div style="display: flex; gap: 10px; margin-top: 5px;">
-                            <button id="learn-play-btn" class="btn" onclick="playLearningMode()" style="flex: 1;">&#x25B6; Play</button>
-                            <select id="learn-speed" style="width: 100px;" onchange="setLearnSpeed(this.value)">
+                        <div class="subhead">Or let it run</div>
+                        <div class="button-pair">
+                            <button id="learn-play-btn" class="btn btn-secondary" onclick="playLearningMode()">&#x25B6; Play</button>
+                            <select id="learn-speed" onchange="setLearnSpeed(this.value)" aria-label="Speed">
                                 <option value="1">Slow</option>
                                 <option value="5" selected>Normal</option>
                                 <option value="30">Fast</option>
                             </select>
                         </div>
-
-                        <button id="learn-reset-btn" class="btn btn-secondary" onclick="resetSimulation()" style="margin-top: 10px; width: 100%;">&#x21BB; Reset</button>
+                        <button id="learn-reset-btn" class="btn btn-ghost" onclick="resetSimulation()">&#x21BB; Start again</button>
                     </div>
                 </div>
 
-                <!-- LEARNING: Color Only -->
                 <div class="control-group" data-mode="learning">
                     <h3 class="section-header" onclick="toggleSection('learn-color-section')">
-                        <span class="section-icon">&#x1F3A8;</span> Filament Color
+                        <span class="section-title">Filament color</span>
                         <span class="help-icon" onclick="event.stopPropagation(); showHelp('filament')">?</span>
                         <span class="chevron">&#x25BC;</span>
                     </h3>
                     <div id="learn-color-section" class="collapsible-content show">
-                        <div class="color-picker-row">
-                            <input type="color" id="learn-filament-color" value="#ff6b35">
-                            <select id="learn-color-presets" onchange="document.getElementById('learn-filament-color').value = this.value; pickFilamentColor(this.value);">
-                                <option value="#ff6b35">Orange</option>
-                                <option value="#ffffff">White</option>
-                                <option value="#000000">Black</option>
-                                <option value="#ff0000">Red</option>
-                                <option value="#0066ff">Blue</option>
-                                <option value="#00ff00">Green</option>
-                            </select>
+                        <div class="swatches" data-for="learn-filament-color">
+                            <button type="button" style="--c:#ff6b35" data-color="#ff6b35" title="Orange"></button>
+                            <button type="button" style="--c:#ffffff" data-color="#ffffff" title="White"></button>
+                            <button type="button" style="--c:#222222" data-color="#000000" title="Black"></button>
+                            <button type="button" style="--c:#ff0000" data-color="#ff0000" title="Red"></button>
+                            <button type="button" style="--c:#0066ff" data-color="#0066ff" title="Blue"></button>
+                            <button type="button" style="--c:#00ff00" data-color="#00ff00" title="Green"></button>
+                            <label class="swatch-custom" title="Any color"><input type="color" id="learn-filament-color" value="#ff6b35"></label>
                         </div>
                     </div>
                 </div>
 
-                <!-- ========== STANDARD MODE SECTIONS ========== -->
+                <!-- ========== STANDARD MODE ========== -->
 
-                <!-- 1. FILE & MODEL SECTION -->
                 <div class="control-group" data-mode="standard">
                     <h3 class="section-header" onclick="toggleSection('file-section')">
-                        <span class="section-icon">&#x1F4C1;</span> File & Model
-                        <span class="help-icon" onclick="event.stopPropagation(); showHelp('stl')">?</span>
+                        <span class="section-title">On the build plate</span>
+                        <span class="help-icon" onclick="event.stopPropagation(); showHelp('buildplate')">?</span>
                         <span class="chevron">&#x25BC;</span>
-                </h3>
-                <div id="file-section" class="collapsible-content show">
-                    <input type="file" id="stl-file" accept=".stl" class="file-input">
-                    <label for="stl-file" class="file-label">&#x1F4E6; Add STL to Build Plate</label>
-                    <button id="asset-stl-btn" class="btn btn-secondary" style="width: 100%; margin-top: 8px;" hidden>&#x1F4C2; Add STL from My Files</button>
+                    </h3>
+                    <div id="file-section" class="collapsible-content show">
+                        <div id="model-list">
+                            <div class="empty-note">Nothing on the plate yet.</div>
+                        </div>
 
-                    <div style="margin: 10px 0;">
-                        <input type="text" id="stl-url" placeholder="https://example.com/model.stl"
-                               style="width: 100%; padding: 8px; background: #1a1a2e; border: 1px solid #333; color: #eee; border-radius: 4px; font-size: 12px;">
-                        <button id="load-url-btn" class="btn btn-secondary" style="width: 100%; margin-top: 5px;">&#x1F310; Load STL from URL</button>
-                        <div class="hint" style="margin-top: 4px;">A direct link to a .stl file. Many model sites block this: download the file and use Add STL instead.</div>
-                    </div>
-
-                    <div id="save-status" style="text-align: center; margin-top: 5px; font-size: 11px; color: #888;"></div>
-                </div>
-            </div>
-
-            <!-- 2. BUILD PLATE MODELS -->
-            <div class="control-group" data-mode="standard">
-                <h3 class="section-header" onclick="toggleSection('models-section')">
-                    <span class="section-icon">&#x1F5C2;&#xFE0F;</span> Build Plate Models
-                    <span class="help-icon" onclick="event.stopPropagation(); showHelp('buildplate')">?</span>
-                    <span class="chevron">&#x25BC;</span>
-                </h3>
-                <div id="models-section" class="collapsible-content show">
-                    <div id="model-list">
-                        <div style="color: #888; font-size: 12px; padding: 10px; text-align: center;">No models loaded</div>
+                        <div class="subhead">Add a model <span class="help-icon help-icon-sm" onclick="showHelp('stl')">?</span></div>
+                        <input type="file" id="stl-file" accept=".stl" class="file-input">
+                        <label for="stl-file" class="file-label">Upload an STL file</label>
+                        <button id="asset-stl-btn" class="btn btn-secondary" hidden>From My Files</button>
+                        <details class="link-loader">
+                            <summary>From a link</summary>
+                            <input type="text" id="stl-url" placeholder="https://example.com/model.stl">
+                            <button id="load-url-btn" class="btn btn-secondary">Load from link</button>
+                            <div class="hint">A direct link to a .stl file. Many model sites block this: download the file and upload it instead.</div>
+                        </details>
+                        <div id="save-status"></div>
                     </div>
                 </div>
-            </div>
 
-            <!-- 3. TRANSFORM CONTROLS -->
-            <div class="control-group" data-mode="standard">
-                <h3 class="section-header" onclick="toggleSection('transform-section')">
-                    <span class="section-icon">&#x1F3AF;</span> Position & Scale
-                    <span class="help-icon" onclick="event.stopPropagation(); showHelp('transform')">?</span>
-                    <span class="chevron">&#x25BC;</span>
-                </h3>
-                <div id="transform-section" class="collapsible-content show">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="show-gizmos" checked onchange="toggleGizmos(this.checked)"> &#x1F3AE; Show Gizmos (Drag in 3D)
-                    </label>
-
-                    <div id="gizmo-type-selector" style="margin-left: 24px; margin-top: 5px; margin-bottom: 10px;">
-                        <label for="gizmo-type" style="font-size: 12px;">Gizmo Type:</label>
-                        <select id="gizmo-type" onchange="changeGizmoType(this.value)">
-                            <option value="position">Move (X, Y, Z)</option>
-                            <option value="rotation">Rotate (X, Y, Z)</option>
-                            <option value="scale">Scale (Resize)</option>
+                <div class="control-group" data-mode="standard">
+                    <h3 class="section-header" onclick="toggleSection('transform-section')">
+                        <span class="section-title">Move and resize</span>
+                        <span class="help-icon" onclick="event.stopPropagation(); showHelp('transform')">?</span>
+                        <span class="chevron">&#x25BC;</span>
+                    </h3>
+                    <div id="transform-section" class="collapsible-content show">
+                        <div class="segmented" id="gizmo-mode" role="group" aria-label="Handles in the 3D view">
+                            <button type="button" data-gizmo="off">Off</button>
+                            <button type="button" data-gizmo="position" class="active">Move</button>
+                            <button type="button" data-gizmo="rotation">Rotate</button>
+                            <button type="button" data-gizmo="scale">Scale</button>
+                        </div>
+                        <div class="hint">Handles to drag the selected model in the 3D view.</div>
+                        <!-- Kept for the code that reads them; the buttons above set them. -->
+                        <input type="checkbox" id="show-gizmos" checked hidden>
+                        <select id="gizmo-type" hidden>
+                            <option value="position">Move</option>
+                            <option value="rotation">Rotate</option>
+                            <option value="scale">Scale</option>
                         </select>
-                    </div>
 
-                    <div id="transform-controls" style="margin-top: 10px;">
-                        <label for="model-pos-x">
-                            <span class="label-icon">&#x2194;&#xFE0F;</span> Position X: <span id="pos-x-value">0.0</span>mm
-                        </label>
-                        <input type="range" id="model-pos-x" min="-100" max="100" step="0.5" value="0" oninput="updateModelPosition('x', this.value)">
+                        <div id="transform-controls">
+                            <div class="subhead">Position <span class="unit">mm</span></div>
+                            <div class="slider-row">
+                                <label for="model-pos-x">X</label>
+                                <input type="range" id="model-pos-x" min="-100" max="100" step="0.5" value="0" oninput="updateModelPosition('x', this.value)">
+                                <span class="val" id="pos-x-value">0.0</span>
+                            </div>
+                            <div class="slider-row">
+                                <label for="model-pos-y">Y</label>
+                                <input type="range" id="model-pos-y" min="-100" max="100" step="0.5" value="0" oninput="updateModelPosition('y', this.value)">
+                                <span class="val" id="pos-y-value">0.0</span>
+                            </div>
+                            <div class="slider-row">
+                                <label for="model-pos-z">Up</label>
+                                <input type="range" id="model-pos-z" min="0" max="200" step="0.5" value="0" oninput="updateModelPosition('z', this.value)">
+                                <span class="val" id="pos-z-value">0.0</span>
+                            </div>
 
-                        <label for="model-pos-y">
-                            <span class="label-icon">&#x2194;&#xFE0F;</span> Position Y: <span id="pos-y-value">0.0</span>mm
-                        </label>
-                        <input type="range" id="model-pos-y" min="-100" max="100" step="0.5" value="0" oninput="updateModelPosition('y', this.value)">
+                            <div class="subhead">Rotation <span class="unit">degrees</span></div>
+                            <div class="slider-row">
+                                <label for="model-rotation-x">X</label>
+                                <input type="range" id="model-rotation-x" min="0" max="360" step="5" value="0" oninput="updateModelRotationAxis('x', this.value)">
+                                <span class="val" id="rotation-x-value">0</span>
+                            </div>
+                            <div class="slider-row">
+                                <label for="model-rotation-y">Y</label>
+                                <input type="range" id="model-rotation-y" min="0" max="360" step="5" value="0" oninput="updateModelRotationAxis('y', this.value)">
+                                <span class="val" id="rotation-y-value">0</span>
+                            </div>
+                            <div class="slider-row">
+                                <label for="model-rotation-z">Z</label>
+                                <input type="range" id="model-rotation-z" min="0" max="360" step="5" value="0" oninput="updateModelRotationAxis('z', this.value)">
+                                <span class="val" id="rotation-z-value">0</span>
+                            </div>
 
-                        <label for="model-pos-z">
-                            <span class="label-icon">&#x2B06;&#xFE0F;</span> Position Z (Height): <span id="pos-z-value">0.0</span>mm
-                        </label>
-                        <input type="range" id="model-pos-z" min="0" max="200" step="0.5" value="0" oninput="updateModelPosition('z', this.value)">
+                            <div class="subhead">Size <span class="unit">%</span></div>
+                            <div class="slider-row">
+                                <label for="model-scale">Scale</label>
+                                <input type="range" id="model-scale" min="10" max="300" step="5" value="100" oninput="updateModelScale(this.value)">
+                                <span class="val" id="scale-value">100</span>
+                            </div>
 
-                        <label for="model-rotation-x">
-                            <span class="label-icon">&#x1F504;</span> Rotation X: <span id="rotation-x-value">0</span>&#xB0;
-                        </label>
-                        <input type="range" id="model-rotation-x" min="0" max="360" step="5" value="0" oninput="updateModelRotationAxis('x', this.value)">
-
-                        <label for="model-rotation-y">
-                            <span class="label-icon">&#x1F504;</span> Rotation Y: <span id="rotation-y-value">0</span>&#xB0;
-                        </label>
-                        <input type="range" id="model-rotation-y" min="0" max="360" step="5" value="0" oninput="updateModelRotationAxis('y', this.value)">
-
-                        <label for="model-rotation-z">
-                            <span class="label-icon">&#x1F504;</span> Rotation Z: <span id="rotation-z-value">0</span>&#xB0;
-                        </label>
-                        <input type="range" id="model-rotation-z" min="0" max="360" step="5" value="0" oninput="updateModelRotationAxis('z', this.value)">
-
-                        <label for="model-scale">
-                            <span class="label-icon">&#x1F4CF;</span> Scale: <span id="scale-value">100</span>%
-                        </label>
-                        <input type="range" id="model-scale" min="10" max="300" step="5" value="100" oninput="updateModelScale(this.value)">
-
-                        <button class="btn btn-secondary" onclick="dropToBuildPlate()" style="margin-top: 10px;">&#x2B07;&#xFE0F; Drop to Build Plate</button>
-                        <div class="hint">Auto-align model bottom to Z=0</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- APPEARANCE -->
-            <div class="control-group" data-mode="standard">
-                <h3 class="section-header" onclick="toggleSection('appearance-section')">
-                    <span class="section-icon">&#x1F3A8;</span> Appearance
-                    <span class="help-icon" onclick="event.stopPropagation(); showHelp('appearance')">?</span>
-                    <span class="chevron">&#x25BC;</span>
-                </h3>
-                <div id="appearance-section" class="collapsible-content">
-                    <label for="filament-color"><span class="label-icon">&#x1F3A8;</span> Filament Color:</label>
-                    <div class="color-picker-row">
-                        <input type="color" id="filament-color" value="#ff6b35">
-                        <select id="color-presets">
-                            <option value="#ff6b35">Orange</option>
-                            <option value="#ffffff">White</option>
-                            <option value="#000000">Black</option>
-                            <option value="#ff0000">Red</option>
-                            <option value="#0066ff">Blue</option>
-                            <option value="#00ff00">Green</option>
-                            <option value="#ffff00">Yellow</option>
-                            <option value="#c0c0c0">Silver</option>
-                            <option value="#ffd700">Gold</option>
-                        </select>
-                    </div>
-
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="rainbow-mode"> Rainbow Layers
-                    </label>
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="use-cylinders"> 3D Cylinders (Slower)
-                    </label>
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="show-printhead" checked> Show Print Head
-                    </label>
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="show-bed" checked> Show Build Plate
-                    </label>
-                </div>
-            </div>
-
-            <!-- LIGHTING -->
-            <div class="control-group" data-mode="standard">
-                <h3 class="section-header" onclick="toggleSection('lighting-section')">
-                    <span class="section-icon">&#x1F4A1;</span> Lighting
-                    <span class="help-icon" onclick="event.stopPropagation(); showHelp('lighting')">?</span>
-                    <span class="chevron">&#x25BC;</span>
-                </h3>
-                <div id="lighting-section" class="collapsible-content">
-                    <label for="light-brightness">
-                        <span class="label-icon">&#x2600;&#xFE0F;</span> Brightness: <span id="brightness-value">60</span>%
-                    </label>
-                    <input type="range" id="light-brightness" min="30" max="150" value="60" step="5" oninput="updateLighting()">
-
-                    <label for="shadow-softness">
-                        <span class="label-icon">&#x1F32B;&#xFE0F;</span> Shadow Softness: <span id="shadow-value">30</span>%
-                    </label>
-                    <input type="range" id="shadow-softness" min="0" max="100" value="30" step="5" oninput="updateLighting()">
-
-                    <label for="detail-level">
-                        <span class="label-icon">&#x1F50D;</span> Layer Detail: <span id="detail-value">50</span>%
-                    </label>
-                    <input type="range" id="detail-level" min="0" max="100" value="50" step="5" oninput="updateLighting()">
-
-                    <div style="margin-top: 10px;">
-                        <label style="font-size: 12px; color: #888; margin-bottom: 5px; display: block;">Presets:</label>
-                        <div style="display: flex; gap: 5px; flex-wrap: wrap;">
-                            <button class="btn btn-small" onclick="applyLightingPreset('layers')">Layers</button>
-                            <button class="btn btn-small" onclick="applyLightingPreset('soft')">Soft</button>
-                            <button class="btn btn-small" onclick="applyLightingPreset('studio')">Studio</button>
-                            <button class="btn btn-small" onclick="applyLightingPreset('flat')">Flat</button>
+                            <button class="btn btn-secondary gap-top" onclick="dropToBuildPlate()" title="Lower the model until its bottom touches the plate">&#x2B07; Drop to the plate</button>
                         </div>
                     </div>
                 </div>
-            </div>
-        </div><!-- End controls-panel -->
+
+                <div class="control-group" data-mode="standard">
+                    <h3 class="section-header collapsed" onclick="toggleSection('appearance-section')">
+                        <span class="section-title">Look</span>
+                        <span class="help-icon" onclick="event.stopPropagation(); showHelp('appearance')">?</span>
+                        <span class="chevron">&#x25BC;</span>
+                    </h3>
+                    <div id="appearance-section" class="collapsible-content">
+                        <div class="subhead">Filament color</div>
+                        <div class="swatches" data-for="filament-color">
+                            <button type="button" style="--c:#ff6b35" data-color="#ff6b35" title="Orange"></button>
+                            <button type="button" style="--c:#ffffff" data-color="#ffffff" title="White"></button>
+                            <button type="button" style="--c:#222222" data-color="#000000" title="Black"></button>
+                            <button type="button" style="--c:#ff0000" data-color="#ff0000" title="Red"></button>
+                            <button type="button" style="--c:#0066ff" data-color="#0066ff" title="Blue"></button>
+                            <button type="button" style="--c:#00ff00" data-color="#00ff00" title="Green"></button>
+                            <button type="button" style="--c:#ffff00" data-color="#ffff00" title="Yellow"></button>
+                            <button type="button" style="--c:#c0c0c0" data-color="#c0c0c0" title="Silver"></button>
+                            <label class="swatch-custom" title="Any color"><input type="color" id="filament-color" value="#ff6b35"></label>
+                        </div>
+
+                        <label class="checkbox-label"><input type="checkbox" id="rainbow-mode"> Rainbow layers</label>
+                        <label class="checkbox-label"><input type="checkbox" id="show-printhead" checked> Show the print head</label>
+                        <label class="checkbox-label"><input type="checkbox" id="show-bed" checked> Show the build plate</label>
+                        <label class="checkbox-label"><input type="checkbox" id="use-cylinders"> Round plastic lines <span class="unit">(slower)</span></label>
+
+                        <div class="subhead">Lighting <span class="help-icon help-icon-sm" onclick="showHelp('lighting')">?</span></div>
+                        <div class="segmented" id="lighting-presets">
+                            <button type="button" data-preset="layers" class="active" onclick="applyLightingPreset('layers')">Layers</button>
+                            <button type="button" data-preset="soft" onclick="applyLightingPreset('soft')">Soft</button>
+                            <button type="button" data-preset="studio" onclick="applyLightingPreset('studio')">Studio</button>
+                            <button type="button" data-preset="flat" onclick="applyLightingPreset('flat')">Flat</button>
+                        </div>
+                        <details class="fine-tune" id="lighting-section">
+                            <summary>Fine-tune</summary>
+                            <div class="slider-row wide">
+                                <label for="light-brightness">Brightness</label>
+                                <input type="range" id="light-brightness" min="30" max="150" value="60" step="5" oninput="updateLighting()">
+                                <span class="val"><span id="brightness-value">60</span>%</span>
+                            </div>
+                            <div class="slider-row wide">
+                                <label for="shadow-softness">Shadows</label>
+                                <input type="range" id="shadow-softness" min="0" max="100" value="30" step="5" oninput="updateLighting()">
+                                <span class="val"><span id="shadow-value">30</span>%</span>
+                            </div>
+                            <div class="slider-row wide">
+                                <label for="detail-level">Layer detail</label>
+                                <input type="range" id="detail-level" min="0" max="100" value="50" step="5" oninput="updateLighting()">
+                                <span class="val"><span id="detail-value">50</span>%</span>
+                            </div>
+                        </details>
+                    </div>
+                </div>
+            </div><!-- End controls-panel -->
 
         <!-- 3D Viewport -->
         <div id="viewport-container">
@@ -534,11 +498,11 @@
         </div>
     </div>
 
-    <script src="js/GCodeParser.js?v=8"></script>
-    <script src="js/GCodeGenerator.js?v=8"></script>
-    <script src="js/STLSlicer.js?v=8"></script>
-    <script src="js/PrinterSimulator.js?v=8"></script>
-    <script src="js/main.js?v=8"></script>
+    <script src="js/GCodeParser.js?v=9"></script>
+    <script src="js/GCodeGenerator.js?v=9"></script>
+    <script src="js/STLSlicer.js?v=9"></script>
+    <script src="js/PrinterSimulator.js?v=9"></script>
+    <script src="js/main.js?v=9"></script>
 
     <script>
     // Help content database
@@ -549,7 +513,7 @@
         },
         'shapes': {
             title: 'Shape generator',
-            content: '<div class="help-section"><p><strong>Cube</strong>: straight walls, the easiest place to see layers and infill.</p><p><strong>Cylinder</strong>: a round wall, drawn as many short straight moves.</p><p><strong>Pyramid</strong>: every layer is a little smaller than the one below, so the slope is really a staircase.</p><p>Tick <strong>Step-Through Mode</strong> before Generate to stop after each layer, then use <strong>Next</strong> and <strong>Previous</strong>.</p></div>'
+            content: '<div class="help-section"><p><strong>Cube</strong>: straight walls, the easiest place to see layers and infill.</p><p><strong>Cylinder</strong>: a round wall, drawn as many short straight moves.</p><p><strong>Pyramid</strong>: every layer is a little smaller than the one below, so the slope is really a staircase.</p><p>Tick <strong>Stop after each layer</strong> before Generate to stop after each layer, then use <strong>Next</strong> and <strong>Previous</strong>.</p></div>'
         },
         'infill': {
             title: 'Infill',
@@ -565,19 +529,19 @@
         },
         'stl': {
             title: 'STL files',
-            content: '<div class="help-section"><h3>What is an STL file?</h3><p>An STL file describes the outside of an object as thousands of tiny triangles. It has no colors and no units: most programs mean millimeters, so a model drawn in meters or inches can arrive tiny or huge. This app scales those to a printable size.</p><p>Make your own in a 3D design app and export it as STL, then use <strong>Add STL</strong>, or save it to your files and use <strong>Add STL from My Files</strong>. <strong>Load STL from URL</strong> needs a direct link to the .stl file itself; many model sites do not allow that, so download the file first.</p></div>'
+            content: '<div class="help-section"><h3>What is an STL file?</h3><p>An STL file describes the outside of an object as thousands of tiny triangles. It has no colors and no units: most programs mean millimeters, so a model drawn in meters or inches can arrive tiny or huge. This app scales those to a printable size.</p><p>Make your own in a 3D design app and export it as STL, then use <strong>Upload an STL file</strong>, or save it to your files and use <strong>From My Files</strong>. <strong>From a link</strong> needs a direct link to the .stl file itself; many model sites do not allow that, so download the file first.</p></div>'
         },
         'buildplate': {
             title: 'Build plate',
             content: '<div class="help-section"><p>The 200 mm by 200 mm surface the print is made on. You can put more than one model on it.</p></div>'
         },
         'transform': {
-            title: 'Position and scale',
-            content: '<div class="help-section"><p>Move, turn and resize a model with the handles in the 3D view or the sliders. <strong>Drop to Build Plate</strong> sets it flat on the plate: a model floating in the air cannot print.</p></div>'
+            title: 'Move and resize',
+            content: '<div class="help-section"><p>Move, turn and resize the selected model with the sliders, or pick <strong>Move</strong>, <strong>Rotate</strong> or <strong>Scale</strong> and drag the handles in the 3D view. <strong>Drop to the plate</strong> sets it flat on the plate: a model floating in the air cannot print.</p></div>'
         },
         'appearance': {
-            title: 'Appearance',
-            content: '<div class="help-section"><p>Filament color, rainbow layers, and showing or hiding the print head and the build plate.</p></div>'
+            title: 'Look',
+            content: '<div class="help-section"><p>Filament color, rainbow layers, showing or hiding the print head and the build plate, and the lighting. <strong>Round plastic lines</strong> draws each line as a tube, which looks more real and is slower.</p></div>'
         },
         'printer-status': {
             title: 'Printer status',
@@ -593,7 +557,7 @@
         },
         'lighting': {
             title: 'Lighting',
-            content: '<div class="help-section"><p>Brightness, shadow and detail. Layers shows the layer lines best.</p></div>'
+            content: '<div class="help-section"><p>Four ready-made lights; <strong>Layers</strong> shows the layer lines best. <strong>Fine-tune</strong> has the brightness, shadow and detail sliders.</p></div>'
         }
     };
 
