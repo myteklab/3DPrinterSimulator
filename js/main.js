@@ -238,6 +238,7 @@ function setupEventListeners() {
         simulator.togglePrintHead(e.target.checked);
     });
     document.getElementById('show-overhangs').addEventListener('change', (e) => simulator.setOverhangsVisible(e.target.checked));
+    document.getElementById('dock-supports').addEventListener('change', () => markDirty());
     document.getElementById('show-bed').addEventListener('change', (e) => {
         simulator.toggleBuildPlate(e.target.checked);
     });
@@ -969,6 +970,7 @@ async function sliceSTL() {
         tempSlicer.layerHeight = layerHeight;
         tempSlicer.topBottomLayers = topBottomLayers;
         tempSlicer.nozzleDiameter = nozzleDiameter;
+        tempSlicer.supportMode = (document.getElementById('dock-supports') || {}).value || 'none';
 
         // Slice combined mesh
         console.log('Slicing combined mesh...');
@@ -1445,7 +1447,10 @@ function loadGCode(gcodeText) {
     simulator.setOverhangs(overhangs, overhangColor().hex);
     simulator.setOverhangsVisible(document.getElementById('show-overhangs')?.checked !== false);
     if (overhangs.length && !learningMode) {
-        showToast(`The ${overhangColor().name} parts print over air, with nothing under them. A real printer needs supports there, or a model with a flatter bottom.`, 'info', 8000);
+        const supported = /; Support/.test(gcodeText);
+        showToast(supported
+            ? `The ${overhangColor().name} parts print over air. The supports hold them up while they print, then snap off.`
+            : `The ${overhangColor().name} parts print over air, with nothing under them. Turn on Supports and slice again, or change the model so it has a flatter bottom.`, 'info', 8000);
     }
 
     // Store totals for HUD updates
@@ -2905,6 +2910,7 @@ function serializeProjectData() {
             infillDensity: parseInt(getElementValue('dock-infill-density', 'learn-infill-density', '20')),
             topBottomLayers: parseInt(getElementValue('dock-shell-layers', 'learn-shell-layers', '3')),
             filamentType: getElementValue('dock-filament-type', 'filament-type', 'pla'),
+            supports: getElementValue('dock-supports', 'dock-supports', 'none'),
             filamentColor: getElementValue('filament-color', 'learn-filament-color', '#FF6600'),
             lineThickness: 1.0, // Fixed value - not exposed in simple UI
             qualityPreset: getElementValue('dock-quality-preset', 'quality-preset', 'normal'),
@@ -3008,6 +3014,7 @@ function loadProjectData(data) {
         setElementValue('line-thickness', settings.nozzleDiameter);
         setElementText('dock-line-thickness-value', settings.nozzleDiameter);
     }
+    setElementValue('dock-supports', settings.supports || 'none');
     if (settings.infillPattern) {
         setElementValue('dock-infill-pattern', settings.infillPattern);
         setElementValue('infill-pattern', settings.infillPattern);

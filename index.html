@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3D Printer Simulator</title>
-    <link rel="stylesheet" href="css/style.css?v=17">
+    <link rel="stylesheet" href="css/style.css?v=18">
     <script src="https://cdn.jsdelivr.net/npm/babylonjs@9.37.0/babylon.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/babylonjs-materials@9.37.0/babylonjs.materials.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/babylonjs-serializers@9.37.0/babylonjs.serializers.min.js"></script>
@@ -379,6 +379,11 @@
                             </select>
                             <label class="inline-setting">Infill:<input type="range" id="dock-infill-density" min="0" max="100" step="5" value="20" class="sm-range"><span id="dock-infill-density-value">20</span>%</label>
                             <label class="inline-setting">Layer height:<input type="range" id="dock-layer-height" min="0.1" max="0.4" step="0.05" value="0.2" class="sm-range"><span id="dock-layer-height-value">0.2</span>mm</label>
+                            <select id="dock-supports" class="sm" title="Supports: plastic columns under parts that would print over air">
+                                <option value="none" selected>No supports</option>
+                                <option value="plate">Supports from the plate</option>
+                                <option value="everywhere">Supports everywhere</option>
+                            </select>
                             <select id="dock-filament-type" class="sm" title="Filament Type">
                                 <option value="pla" selected>PLA</option>
                                 <option value="petg">PETG</option>
@@ -495,11 +500,11 @@
         </div>
     </div>
 
-    <script src="js/GCodeParser.js?v=17"></script>
-    <script src="js/GCodeGenerator.js?v=17"></script>
-    <script src="js/STLSlicer.js?v=17"></script>
-    <script src="js/PrinterSimulator.js?v=17"></script>
-    <script src="js/main.js?v=17"></script>
+    <script src="js/GCodeParser.js?v=18"></script>
+    <script src="js/GCodeGenerator.js?v=18"></script>
+    <script src="js/STLSlicer.js?v=18"></script>
+    <script src="js/PrinterSimulator.js?v=18"></script>
+    <script src="js/main.js?v=18"></script>
 
     <script>
     // Help content database
@@ -546,7 +551,7 @@
         },
         'slicer': {
             title: 'Slicer',
-            content: '<div class="help-section"><p>The slicer turns the model into layers and G-code. <strong>Quality</strong> picks the layer height: Fast 0.3 mm, Normal 0.2 mm, Detailed 0.1 mm. <strong>Infill</strong> sets how full the inside is. Press Slice again after changing anything.</p></div>'
+            content: '<div class="help-section"><p>The slicer turns the model into layers and G-code. <strong>Quality</strong> picks the layer height: Fast 0.3 mm, Normal 0.2 mm, Detailed 0.1 mm. <strong>Infill</strong> sets how full the inside is. Press Slice again after changing anything.</p><p><strong>Supports</strong> are thin columns of plastic the printer builds under parts that would otherwise print over air, like the bottom of a ball or a chin. You snap them off afterwards. <strong>From the plate</strong> only builds columns that stand on the build plate; <strong>Everywhere</strong> can also stand them on the model itself. A part that leans out less than about 45 degrees prints fine without them.</p></div>'
         },
         'gcode': {
             title: 'G-code',

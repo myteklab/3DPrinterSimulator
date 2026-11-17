@@ -501,6 +501,7 @@ class STLSlicer {
 
         let extrusionCounter = 0;
         const allPaths = layers.map(layer => this.segmentsToPerimeter(layer.segments));
+        this._supportLines = this.supportMode && this.supportMode !== 'none' ? this.computeSupports(layers, allPaths) : null;
 
         // Process each layer using provided sequences
         for (let i = 0; i < layers.length; i++) {
@@ -576,6 +577,7 @@ class STLSlicer {
         let extrusionCounter = 0;
 
         const allPaths = layers.map(layer => this.segmentsToPerimeter(layer.segments));
+        this._supportLines = this.supportMode && this.supportMode !== 'none' ? this.computeSupports(layers, allPaths) : null;
 
         // Process each layer
         for (let i = 0; i < layers.length; i++) {
@@ -769,7 +771,87 @@ class STLSlicer {
                 }
             }
         }
+        const support = this._supportLines && this._supportLines[i];
+        if (support && support.length) {
+            out.push('; Support');
+            support.forEach(([x0, x1, y], k) => {
+                const [s0, e0] = k % 2 === 0 ? [x0, x1] : [x1, x0];
+                out.push(`G0 X${s0.toFixed(3)} Y${y.toFixed(3)}`);
+                out.push(`G1 X${e0.toFixed(3)} Y${y.toFixed(3)} E0 F1500`);
+            });
+        }
         return out;
+    }
+
+    // Supports, the "lines" kind most slicers start with. The model is marked
+    // on a 1 mm grid, layer by layer. A spot needs holding up when it starts
+    // with nothing under it inside a 45 degree cone (no model within one cell
+    // sideways in the layers 1 mm below). Under it a column of support runs
+    // down to the plate ('plate': a column that meets the model is dropped) or
+    // onto the model ('everywhere'), one empty layer short at the top and
+    // bottom and a cell clear of the walls beside it, so it snaps off. Columns
+    // print as lines every 2 mm. Returns, per layer, [x0, x1, y] lines.
+    computeSupports(layers, allPaths) {
+        const n = layers.length;
+        if (n < 3) return null;
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        for (const paths of allPaths) for (const path of paths) for (const p of path) {
+            if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y;
+        }
+        let g = 1;
+        let cols = Math.ceil((x1 - x0) / g) + 1, rows = Math.ceil((y1 - y0) / g) + 1;
+        // keep the grid under ~24M cells on very big prints
+        while (cols * rows * n > 24e6) { g *= 1.5; cols = Math.ceil((x1 - x0) / g) + 1; rows = Math.ceil((y1 - y0) / g) + 1; }
+        const cells = cols * rows;
+        const occ = new Uint8Array(cells * n);
+        for (let k = 0; k < n; k++) {
+            for (let r = 0; r < rows; r++) {
+                const y = y0 + (r + 0.5) * g;
+                for (const [a, b] of this.insideIntervals(allPaths[k], y, false)) {
+                    const c0 = Math.max(0, Math.ceil((a - x0) / g - 0.5)), c1 = Math.min(cols - 1, Math.floor((b - x0) / g - 0.5));
+                    for (let c = c0; c <= c1; c++) occ[k * cells + r * cols + c] = 1;
+                }
+            }
+        }
+        const at = (k, r, c) => r >= 0 && r < rows && c >= 0 && c < cols && occ[k * cells + r * cols + c] === 1;
+        const cone = Math.max(1, Math.round(g / this.layerHeight));
+        const sup = new Uint8Array(cells * n);
+        for (let k = 1; k < n; k++) {
+            for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+                if (!at(k, r, c) || at(k - 1, r, c)) continue;
+                let held = false;
+                for (let m = Math.max(0, k - cone); m < k && !held; m++) {
+                    for (let dr = -1; dr <= 1 && !held; dr++) for (let dc = -1; dc <= 1; dc++) if (at(m, r + dr, c + dc)) { held = true; break; }
+                }
+                if (held) continue;
+                let j = k - 2, column = [];
+                for (; j >= 0 && !at(j, r, c); j--) column.push(j);
+                if (j >= 0) {
+                    if (this.supportMode === 'plate') continue;
+                    column.pop(); // the empty layer on top of the model it stands on
+                }
+                for (const jj of column) sup[jj * cells + r * cols + c] = 1;
+            }
+        }
+        const lines = [];
+        for (let k = 0; k < n; k++) {
+            const out = [];
+            for (let r = 0; r < rows; r += 2) {
+                let start = -1;
+                for (let c = 0; c <= cols; c++) {
+                    const on = c < cols && sup[k * cells + r * cols + c] === 1 &&
+                        !at(k, r, c - 1) && !at(k, r, c + 1) && !at(k, r - 1, c) && !at(k, r + 1, c);
+                    if (on && start < 0) start = c;
+                    if (!on && start >= 0) {
+                        const xa = x0 + start * g + 0.2, xb = x0 + c * g - 0.2;
+                        if (xb - xa > 0.3) out.push([xa, xb, y0 + (r + 0.5) * g]);
+                        start = -1;
+                    }
+                }
+            }
+            lines.push(out);
+        }
+        return lines;
     }
 
     // Where a scanline at c (y = c, or x = c when vertical) is inside the
