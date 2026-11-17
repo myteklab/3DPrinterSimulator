@@ -551,9 +551,7 @@ async function handleSTLUpload(event) {
         // Create model object
         const modelId = ++modelIdCounter;
 
-        // Check if model needs to be laid flat (if it's taller in Y than Z, rotate it)
-        // Most STLs come oriented standing up and need to be rotated to lay flat for printing
-        const needsRotation = bbox.size.y > bbox.size.z;
+        const resting = restingRotation(tempSlicer.mesh, bbox);
 
         const model = {
             id: modelId,
@@ -564,7 +562,7 @@ async function handleSTLUpload(event) {
             // Position so bottom of model sits on build plate (Z=0)
             position: { x: 0, y: 0, z: 0 },
             // Rotate -90° around X axis to lay flat if needed
-            rotation: needsRotation ? { x: -90, y: 0, z: 0 } : { x: 0, y: 0, z: 0 },
+            rotation: resting,
             scale: { x: 1, y: 1, z: 1 },
             boundingBox: bbox,
             triangleCount: triangleCount
@@ -713,8 +711,7 @@ async function loadSTLFromURLCore(url, opts = {}) {
         // Create model object
         const modelId = ++modelIdCounter;
 
-        // Check if model needs to be laid flat (if it's taller in Y than Z, rotate it)
-        const needsRotation = bbox.size.y > bbox.size.z;
+        const resting = restingRotation(tempSlicer.mesh, bbox);
 
         const model = {
             id: modelId,
@@ -723,7 +720,7 @@ async function loadSTLFromURLCore(url, opts = {}) {
             mesh: tempSlicer.mesh,
             previewMesh: null,
             position: { x: 0, y: 0, z: 0 },
-            rotation: needsRotation ? { x: -90, y: 0, z: 0 } : { x: 0, y: 0, z: 0 },
+            rotation: resting,
             scale: { x: 1, y: 1, z: 1 },
             boundingBox: bbox,
             triangleCount: triangleCount,
@@ -1044,6 +1041,52 @@ async function sliceSTL() {
         updateSliceButton(false, 'Slice');
         updateSliceStatus('Slicing failed - check console');
     }
+}
+
+// Which side the model rests on when it arrives. STL files are Z-up by
+// convention (BlocksCAD, Tinkercad, OpenSCAD), which here is a -90 turn on X.
+// The old rule, "deeper than tall means turn it", left tall Z-up models lying on
+// their side. Now Z-up is kept whenever its bottom has a real flat area, and a
+// side with one is used only when the Z-up bottom has none, which is what a
+// Y-up export from a 3D app looks like. With no flat side anywhere (a sphere,
+// a scan) the old rule decides.
+const RESTING_CANDIDATES = [
+    { x: -90, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }, { x: 90, y: 0, z: 0 },
+    { x: 180, y: 0, z: 0 }, { x: 0, y: 0, z: 90 }, { x: 0, y: 0, z: -90 }
+];
+// Measured with Babylon's own rotation, because slicing reads the preview mesh
+// (world Y is up there); transformVertex's matrix gives the opposite sign.
+function restingRotation(mesh, bbox) {
+    const size = Math.max(bbox.size.x, bbox.size.y, bbox.size.z) || 1;
+    const tol = size * 0.002;
+    const d = Math.PI / 180;
+    let best = null, bestArea = 0, zUpArea = 0;
+    for (const rot of RESTING_CANDIDATES) {
+        const m = BABYLON.Matrix.RotationYawPitchRoll(rot.y * d, rot.x * d, rot.z * d).m;
+        // world Y of a point under this rotation (row vector times matrix, column 1)
+        const up = (p) => p.x * m[1] + p.y * m[5] + p.z * m[9];
+        const heights = new Float64Array(mesh.length * 3);
+        let minH = Infinity;
+        for (let i = 0; i < mesh.length; i++) {
+            const t = mesh[i];
+            heights[i * 3] = up(t.v1); heights[i * 3 + 1] = up(t.v2); heights[i * 3 + 2] = up(t.v3);
+            minH = Math.min(minH, heights[i * 3], heights[i * 3 + 1], heights[i * 3 + 2]);
+        }
+        let area = 0;
+        for (let i = 0; i < mesh.length; i++) {
+            if (heights[i * 3] - minH > tol || heights[i * 3 + 1] - minH > tol || heights[i * 3 + 2] - minH > tol) continue;
+            const t = mesh[i];
+            const ax = t.v2.x - t.v1.x, ay = t.v2.y - t.v1.y, az = t.v2.z - t.v1.z;
+            const bx = t.v3.x - t.v1.x, by = t.v3.y - t.v1.y, bz = t.v3.z - t.v1.z;
+            area += Math.hypot(ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx) / 2;
+        }
+        if (rot === RESTING_CANDIDATES[0]) zUpArea = area;
+        if (area > bestArea) { bestArea = area; best = rot; }
+    }
+    const flat = size * size * 0.01;
+    if (zUpArea >= flat) return { x: -90, y: 0, z: 0 };
+    if (bestArea >= flat) return { ...best };
+    return bbox.size.y > bbox.size.z ? { x: -90, y: 0, z: 0 } : { x: 0, y: 0, z: 0 };
 }
 
 /**
