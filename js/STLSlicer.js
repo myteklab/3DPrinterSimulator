@@ -643,52 +643,53 @@ class STLSlicer {
     segmentsToPerimeter(segments) {
         if (segments.length === 0) return [];
 
-        // Build connected paths from segments
-        const paths = [];
-        const unusedSegments = [...segments];
-        const tolerance = 0.01; // Distance tolerance for connecting points
-
-        while (unusedSegments.length > 0) {
-            const currentPath = [];
-            const firstSeg = unusedSegments.shift();
-
-            currentPath.push({ x: firstSeg.start.x, y: firstSeg.start.y });
-            currentPath.push({ x: firstSeg.end.x, y: firstSeg.end.y });
-
-            let lastPoint = firstSeg.end;
-            let foundConnection = true;
-
-            // Keep connecting segments until we close the loop or can't find more
-            while (foundConnection && unusedSegments.length > 0) {
-                foundConnection = false;
-
-                for (let i = 0; i < unusedSegments.length; i++) {
-                    const seg = unusedSegments[i];
-                    const distToStart = Math.hypot(lastPoint.x - seg.start.x, lastPoint.y - seg.start.y);
-                    const distToEnd = Math.hypot(lastPoint.x - seg.end.x, lastPoint.y - seg.end.y);
-
-                    if (distToStart < tolerance) {
-                        // Connect to start of this segment
-                        currentPath.push({ x: seg.end.x, y: seg.end.y });
-                        lastPoint = seg.end;
-                        unusedSegments.splice(i, 1);
-                        foundConnection = true;
-                        break;
-                    } else if (distToEnd < tolerance) {
-                        // Connect to end of this segment (reversed)
-                        currentPath.push({ x: seg.start.x, y: seg.start.y });
-                        lastPoint = seg.start;
-                        unusedSegments.splice(i, 1);
-                        foundConnection = true;
-                        break;
-                    }
+        // Ends are matched exactly through a lookup. The old walk took the first
+        // end within 0.01 mm, which near tiny facets (where the turkey's body
+        // meets its base) was often the wrong one: the loop closed early and the
+        // pieces it skipped were thrown away, leaving holes in the outline.
+        // A clean mesh slice puts every point on exactly two pieces.
+        const key = (p) => Math.round(p.x * 1e5) + ',' + Math.round(p.y * 1e5);
+        const at = new Map();
+        segments.forEach((seg, idx) => {
+            for (const end of [seg.start, seg.end]) {
+                const k = key(end);
+                if (!at.has(k)) at.set(k, []);
+                at.get(k).push(idx);
+            }
+        });
+        const used = new Uint8Array(segments.length);
+        // For a mesh with small cracks: the nearest free end, if it is close.
+        const nearestFree = (p) => {
+            let best = -1, bestD = 0.05;
+            segments.forEach((seg, idx) => {
+                if (used[idx]) return;
+                for (const end of [seg.start, seg.end]) {
+                    const d = Math.hypot(end.x - p.x, end.y - p.y);
+                    if (d < bestD) { bestD = d; best = idx; }
                 }
-            }
+            });
+            return best;
+        };
 
-            // Only add paths with at least 3 points
-            if (currentPath.length >= 3) {
-                paths.push(currentPath);
+        const paths = [];
+        for (let first = 0; first < segments.length; first++) {
+            if (used[first]) continue;
+            used[first] = 1;
+            const path = [{ x: segments[first].start.x, y: segments[first].start.y }];
+            let last = segments[first].end;
+            path.push({ x: last.x, y: last.y });
+            const startKey = key(segments[first].start);
+            while (key(last) !== startKey) {
+                let next = (at.get(key(last)) || []).find(idx => !used[idx]);
+                if (next === undefined) next = nearestFree(last);
+                if (next === undefined || next < 0) break;
+                used[next] = 1;
+                const seg = segments[next];
+                const near = Math.hypot(seg.start.x - last.x, seg.start.y - last.y) <= Math.hypot(seg.end.x - last.x, seg.end.y - last.y);
+                last = near ? seg.end : seg.start;
+                path.push({ x: last.x, y: last.y });
             }
+            if (path.length >= 3) paths.push(path);
         }
 
         return paths;
@@ -735,20 +736,25 @@ class STLSlicer {
         }
         const spacing = this.nozzleDiameter * 0.875;
         const minPiece = this.nozzleDiameter * 1.5;
+        // Lines stop half a line width inside the wall, as a real slicer's do.
+        // Run to the wall's centre line they poked out past it wherever nothing
+        // was above or below, and showed as dashes along the turkey's feathers.
+        const wallGap = this.nozzleDiameter / 2;
         const inset = 0.2;
         let first = true;
         for (const vertical of [false, true]) {
             const lo = (vertical ? bbox.minX : bbox.minY) + inset;
             const hi = (vertical ? bbox.maxX : bbox.maxY) - inset;
             for (let c = lo, row = 0; c <= hi + 0.01; c += spacing, row++) {
-                let exposed = this.insideIntervals(paths, c, vertical);
-                if (!exposed.length) continue;
-                let covered = exposed;
+                const own = this.insideIntervals(paths, c, vertical);
+                if (!own.length) continue;
+                let exposed = own;
+                let covered = own;
                 for (const nb of neighbours) {
                     covered = nb ? this.intersectIntervals(covered, this.insideIntervals(nb, c, vertical)) : [];
                     if (!covered.length) break;
                 }
-                exposed = this.subtractIntervals(exposed, covered);
+                exposed = this.intersectIntervals(this.subtractIntervals(exposed, covered), this.insetIntervals(own, wallGap));
                 for (const [a0, b0] of exposed) {
                     if (b0 - a0 < minPiece) continue;
                     if (first) { out.push('; Solid surface'); first = false; }
@@ -777,6 +783,10 @@ class STLSlicer {
         const out = [];
         for (let k = 0; k + 1 < xs.length; k += 2) out.push([xs[k], xs[k + 1]]);
         return out;
+    }
+
+    insetIntervals(list, d) {
+        return list.map(([lo, hi]) => [lo + d, hi - d]).filter(([lo, hi]) => hi > lo);
     }
 
     intersectIntervals(a, b) {
@@ -963,15 +973,16 @@ class STLSlicer {
                 // Check each segment to ensure it's actually in solid geometry (not in holes)
                 for (let j = 0; j < allIntersections.length; j += 2) {
                     if (j + 1 < allIntersections.length) {
-                        const startY = allIntersections[j];
-                        const endY = allIntersections[j + 1];
+                        // half a line width inside the wall at both ends, like the skin lines
+                        const startY = allIntersections[j] + this.nozzleDiameter / 2;
+                        const endY = allIntersections[j + 1] - this.nozzleDiameter / 2;
 
                         // Check midpoint of segment to ensure it's in solid geometry
                         const midY = (startY + endY) / 2;
                         const midpoint = { x: x, y: midY };
 
                         // Only generate line if segment is long enough AND midpoint is in solid geometry
-                        if (Math.abs(endY - startY) > 0.1 && this.isPointInSolidGeometry(midpoint, paths)) {
+                        if (endY - startY > 0.1 && this.isPointInSolidGeometry(midpoint, paths)) {
                             if (i % 2 === 0) {
                                 gcode.push(`G0 X${x.toFixed(3)} Y${startY.toFixed(3)}`);
                                 gcode.push(`G1 X${x.toFixed(3)} Y${endY.toFixed(3)} E0 F1500`);
@@ -1011,15 +1022,15 @@ class STLSlicer {
             // Check each segment to ensure it's actually in solid geometry (not in holes)
             for (let j = 0; j < allIntersections.length; j += 2) {
                 if (j + 1 < allIntersections.length) {
-                    const startX = allIntersections[j];
-                    const endX = allIntersections[j + 1];
+                    const startX = allIntersections[j] + this.nozzleDiameter / 2;
+                    const endX = allIntersections[j + 1] - this.nozzleDiameter / 2;
 
                     // Check midpoint of segment to ensure it's in solid geometry
                     const midX = (startX + endX) / 2;
                     const midpoint = { x: midX, y: y };
 
                     // Only generate line if segment is long enough AND midpoint is in solid geometry
-                    if (Math.abs(endX - startX) > 0.1 && this.isPointInSolidGeometry(midpoint, paths)) {
+                    if (endX - startX > 0.1 && this.isPointInSolidGeometry(midpoint, paths)) {
                         if (i % 2 === 0) {
                             gcode.push(`G0 X${startX.toFixed(3)} Y${y.toFixed(3)}`);
                             gcode.push(`G1 X${endX.toFixed(3)} Y${y.toFixed(3)} E0 F1500`);
